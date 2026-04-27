@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "braincontrol"
-version = "0.1.0"
+version = "0.1.1"
 description = "Network Control Theory for Neuroimaging Data"
 authors = [
     { name="Johannes Wiesner", email="joh.wiesner@gmail.com" }
