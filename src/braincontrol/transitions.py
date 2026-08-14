@@ -17,7 +17,7 @@ from nilearn._utils.cache_mixin import CacheMixin
 from sklearn.base import BaseEstimator, TransformerMixin, clone
 from sklearn.utils.validation import check_is_fitted
 
-
+# FIXME: Define these options in _validate_transition_inputs
 _TRANSITION_ORDERS = ("combinations", "permutations", "product", "stability")
 _ENERGY_TYPES = ("minimal", "optimal")
 
@@ -130,7 +130,6 @@ def _set_transition_order(n_states, order):
         for transition, (source, target) in enumerate(pairs)
     ]
     return len(transition_indices), transition_indices
-
 
 def state_to_state_transition(
     A,
@@ -327,8 +326,8 @@ def _attribute_level_names(
         names.append(name)
     return names
 
-# TODO: This should not flatten multiindeces, but instead add another higher order level (transition)
-# that maps the lower order levels to "source" and "target"
+# TODO: This should not flatten multiindeces, but instead add another higher order level with the name "transition"
+# that maps the lower order levels to either "source" or "target" level
 def _state_transition_columns(df, state_attributes, order, n_transitions):
     """Add source and target columns for every state attribute level."""
     state_attributes = _coerce_attributes(
@@ -368,7 +367,6 @@ def _state_transition_columns(df, state_attributes, order, n_transitions):
     ]
     transition_columns.append("transition_name")
     return transition_columns
-
 
 def get_state_to_state_df(
     state_to_state_array,
@@ -454,40 +452,6 @@ def get_transition_df(
     )
     energies = state_to_state_aggregation(control_inputs)
     return get_state_to_state_df(energies, order=order, **kwargs)
-
-# TODO: Not sure if there is a better way to do this. The general goal here is
-# that Transitioner should be able to compute also other things than control energy
-# for a given source-target state pair.
-def state_to_state_comparison(X, func, order="permutations"):
-    """Apply a pairwise operation to requested source and target states."""
-    X = _as_2d_float_array(X, "X")
-    n_transitions, transition_indices = _set_transition_order(X.shape[0], order)
-
-    if func == "difference":
-        operation = np.subtract
-    elif func == "sum":
-        operation = np.add
-    elif callable(func):
-        operation = func
-    else:
-        raise ValueError("func must be 'difference', 'sum', or a callable")
-
-    comparisons = np.empty((n_transitions, X.shape[1]))
-    for transition, source, target in transition_indices:
-        result = np.asarray(operation(X[source], X[target]), dtype=float)
-        if result.shape != (X.shape[1],):
-            raise ValueError(
-                "func must return one value per node; "
-                f"got shape {result.shape}"
-            )
-        comparisons[transition] = result
-    return comparisons
-
-# TODO: Not sure if this is needed, because get_state_to_state_df can also handle this?
-def get_state_comparison_df(X, func, order="permutations", **kwargs):
-    """Apply a pairwise state operation and return a labelled DataFrame."""
-    comparisons = state_to_state_comparison(X, func=func, order=order)
-    return get_state_to_state_df(comparisons, order=order, **kwargs)
 
 # FIXME: Update docstring
 # FIXME: Add node_attributes and state_attributes
