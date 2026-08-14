@@ -21,39 +21,13 @@ from sklearn.utils.validation import check_is_fitted
 _TRANSITION_ORDERS = ("combinations", "permutations", "product", "stability")
 _ENERGY_TYPES = ("minimal", "optimal")
 
-
-def _set_transition_order(n_states, order):
-    """Return the number and indices of requested state transitions.
-
-    Each transition tuple contains ``(transition, source, target)``.  The
-    ordering matches the corresponding iterator in :mod:`itertools`.
-    """
-    if not isinstance(n_states, (int, np.integer)) or isinstance(n_states, bool):
-        raise TypeError("n_states must be an integer")
-    if n_states < 1:
-        raise ValueError("n_states must be at least 1")
-    if order not in _TRANSITION_ORDERS:
-        choices = ", ".join(repr(choice) for choice in _TRANSITION_ORDERS)
-        raise ValueError(f"order must be one of {choices}; got {order!r}")
-
-    indices = range(n_states)
-    if order == "permutations":
-        pairs = permutations(indices, r=2)
-    elif order == "combinations":
-        pairs = combinations(indices, r=2)
-    elif order == "product":
-        pairs = product(indices, repeat=2)
-    else:
-        pairs = ((index, index) for index in indices)
-
-    transition_indices = [
-        (transition, source, target)
-        for transition, (source, target) in enumerate(pairs)
-    ]
-    return len(transition_indices), transition_indices
+########################################################################################
+## Input validation
+########################################################################################
 
 
 def _as_2d_float_array(value, name):
+    """Validate that input matrix is 2D and has only finited values"""
     array = np.asarray(value, dtype=float)
     if array.ndim != 2:
         raise ValueError(f"{name} must be a two-dimensional array")
@@ -61,8 +35,8 @@ def _as_2d_float_array(value, name):
         raise ValueError(f"{name} must contain only finite values")
     return array
 
-
 def _resolve_square_matrix(value, name, n_nodes):
+    """Validate that input matrix is square-like and has number of nodes"""
     if isinstance(value, str):
         if value != "identity":
             raise ValueError(f"{name} must be an array or 'identity'")
@@ -76,9 +50,9 @@ def _resolve_square_matrix(value, name, n_nodes):
     return matrix
 
 
-def _validate_transition_inputs(
-    A, T, B, X, rho, S, energy_type, order, system
-):
+def _validate_transition_inputs(A, T, B, X, rho, S, energy_type, order, system):
+    """Validate all inputs to compute control energy"""
+
     A = _as_2d_float_array(A, "A")
     if A.shape[0] != A.shape[1]:
         raise ValueError(f"A must be square; got shape {A.shape}")
@@ -122,6 +96,40 @@ def _validate_transition_inputs(
     T = int(T) if system == "discrete" else float(T)
     rho = None if rho is None else float(rho)
     return A, T, B, X, rho, S
+
+########################################################################################
+## Transitions
+########################################################################################
+
+def _set_transition_order(n_states, order):
+    """Return the number and indices of requested state transitions.
+
+    Each transition tuple contains ``(transition, source, target)``.  The
+    ordering matches the corresponding iterator in :mod:`itertools`.
+    """
+    if not isinstance(n_states, (int, np.integer)) or isinstance(n_states, bool):
+        raise TypeError("n_states must be an integer")
+    if n_states < 1:
+        raise ValueError("n_states must be at least 1")
+    if order not in _TRANSITION_ORDERS:
+        choices = ", ".join(repr(choice) for choice in _TRANSITION_ORDERS)
+        raise ValueError(f"order must be one of {choices}; got {order!r}")
+
+    indices = range(n_states)
+    if order == "permutations":
+        pairs = permutations(indices, r=2)
+    elif order == "combinations":
+        pairs = combinations(indices, r=2)
+    elif order == "product":
+        pairs = product(indices, repeat=2)
+    else:
+        pairs = ((index, index) for index in indices)
+
+    transition_indices = [
+        (transition, source, target)
+        for transition, (source, target) in enumerate(pairs)
+    ]
+    return len(transition_indices), transition_indices
 
 
 def state_to_state_transition(
@@ -224,7 +232,7 @@ def state_to_state_transition(
 
     return trajectory_array, control_input_array, error_array
 
-
+# FIXME: Should be renamed to state_to_state_integration
 def state_to_state_aggregation(control_inputs):
     """Integrate squared control inputs over time for every transition."""
     control_inputs = np.asarray(control_inputs, dtype=float)
@@ -319,7 +327,8 @@ def _attribute_level_names(
         names.append(name)
     return names
 
-
+# TODO: This should not flatten multiindeces, but instead add another higher order level (transition)
+# that maps the lower order levels to "source" and "target"
 def _state_transition_columns(df, state_attributes, order, n_transitions):
     """Add source and target columns for every state attribute level."""
     state_attributes = _coerce_attributes(
@@ -415,7 +424,6 @@ def get_state_to_state_df(
     df.columns = node_attributes
     return df
 
-
 def get_transition_df(
     A,
     T,
@@ -447,7 +455,9 @@ def get_transition_df(
     energies = state_to_state_aggregation(control_inputs)
     return get_state_to_state_df(energies, order=order, **kwargs)
 
-
+# TODO: Not sure if there is a better way to do this. The general goal here is
+# that Transitioner should be able to compute also other things than control energy
+# for a given source-target state pair.
 def state_to_state_comparison(X, func, order="permutations"):
     """Apply a pairwise operation to requested source and target states."""
     X = _as_2d_float_array(X, "X")
@@ -473,13 +483,14 @@ def state_to_state_comparison(X, func, order="permutations"):
         comparisons[transition] = result
     return comparisons
 
-
+# TODO: Not sure if this is needed, because get_state_to_state_df can also handle this?
 def get_state_comparison_df(X, func, order="permutations", **kwargs):
     """Apply a pairwise state operation and return a labelled DataFrame."""
     comparisons = state_to_state_comparison(X, func=func, order=order)
     return get_state_to_state_df(comparisons, order=order, **kwargs)
 
-
+# FIXME: Update docstring
+# FIXME: Add node_attributes and state_attributes
 class Transitioner(
     TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output_keys=None
 ):
@@ -564,6 +575,7 @@ class Transitioner(
             return False
         return array.ndim == 2 and np.issubdtype(array.dtype, np.number)
 
+    # FIXME: Input validation should happen in _validate_transition_inputs if possible
     @staticmethod
     def _resolve_state_input(X=None, x0=None, xf=None):
         """Return state input and whether it represents one explicit pair."""
@@ -625,10 +637,12 @@ class Transitioner(
         self._fit_cache()
         state_input, _ = self._resolve_state_input(X=X, x0=x0, xf=xf)
         states = self._fit_states(state_input)
+
+        # FIXME: Input validation should happen in _validate_transition_inputs if possible
         if not isinstance(self.normalize_A, (bool, np.bool_)):
             raise TypeError("normalize_A must be a boolean")
         if (
-            isinstance(self.c, (bool, np.bool_))
+            isinstance(self.c, (bool, np.bool_)) # FIXME:c must not be a bool
             or not isinstance(self.c, (int, float, np.integer, np.floating))
             or not np.isfinite(self.c)
             or self.c <= 0
@@ -636,6 +650,7 @@ class Transitioner(
             raise ValueError("c must be a positive finite number")
         self.c_ = float(self.c)
         adjacency = _as_2d_float_array(self.A, "A")
+        # FIXME: Input validation should happen in _validate_transition_inputs if possible
         if adjacency.shape[0] != adjacency.shape[1]:
             raise ValueError(f"A must be square; got shape {adjacency.shape}")
         if self.system not in ("continuous", "discrete"):
@@ -732,7 +747,6 @@ class Transitioner(
             [f"node_{index}" for index in range(self.n_features_in_)],
             dtype=object,
         )
-
 
 __all__ = [
     "Transitioner",
