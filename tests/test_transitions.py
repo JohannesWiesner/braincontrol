@@ -21,6 +21,7 @@ from braincontrol.transitions import (
     get_transition_info,
     state_to_state_aggregation,
     state_to_state_comparison,
+    state_to_state_integration,
     state_to_state_transition,
 )
 
@@ -102,9 +103,12 @@ def test_transition_matches_nctpy(transition_data):
     np.testing.assert_allclose(controls[:, :, 0], expected_u)
     np.testing.assert_allclose(errors[0], expected_error)
 
-    energies = state_to_state_aggregation(controls)
+    energies = state_to_state_integration(controls)
     assert energies.shape == (6, 2)
     np.testing.assert_allclose(energies[0], integrate_u(expected_u))
+    np.testing.assert_array_equal(
+        state_to_state_aggregation(controls), energies
+    )
 
 
 def test_transition_validates_node_count(transition_data):
@@ -277,16 +281,16 @@ def test_state_attributes_accept_multiindex_like_tuples():
         state_attributes=state_attributes,
     )
     assert result.index.names == [
-        "source_state_attribute_0",
-        "target_state_attribute_0",
-        "source_state_attribute_1",
-        "target_state_attribute_1",
-        "transition_name",
+        ("source", "state_attribute_0"),
+        ("source", "state_attribute_1"),
+        ("target", "state_attribute_0"),
+        ("target", "state_attribute_1"),
+        ("transition", "name"),
     ]
     assert result.index[0] == (
         "baseline",
-        "active",
         "rest",
+        "active",
         "task",
         "rest-task",
     )
@@ -328,11 +332,11 @@ def test_state_to_state_dataframe_with_hierarchical_attributes():
     result = get_state_to_state_df(energies, "permutations", **kwargs)
     assert result.shape == (6, 2)
     assert result.index.names == [
-        "source_group",
-        "target_group",
-        "source_state",
-        "target_state",
-        "transition_name",
+        ("source", "group"),
+        ("source", "state"),
+        ("target", "group"),
+        ("target", "state"),
+        ("transition", "name"),
     ]
     assert result.columns.equals(node_attributes)
 
@@ -476,6 +480,45 @@ def test_transitioner_with_state_matrix(transition_data):
     assert transitioner.get_feature_names_out().tolist() == ["node_0", "node_1"]
 
 
+def test_transitioner_returns_labelled_dataframe(transition_data):
+    adjacency, states = transition_data
+    node_attributes = pd.MultiIndex.from_tuples(
+        [("left", "A"), ("right", "B")], names=["hemisphere", "node"]
+    )
+    transitioner = Transitioner(
+        A=adjacency,
+        T=0.002,
+        order="combinations",
+        node_attributes=node_attributes,
+        state_attributes=["rest", "task", "recovery"],
+    )
+
+    energies = transitioner.fit_transform(states)
+
+    assert isinstance(energies, pd.DataFrame)
+    assert energies.columns.equals(node_attributes)
+    assert energies.index.names == [
+        "source_state",
+        "target_state",
+        "transition_name",
+    ]
+    assert transitioner.get_feature_names_out().tolist() == list(
+        node_attributes
+    )
+
+
+def test_transitioner_validates_metadata_lengths(transition_data):
+    adjacency, states = transition_data
+    with pytest.raises(ValueError, match="node_attributes must contain 2"):
+        Transitioner(
+            A=adjacency, T=0.002, node_attributes=["only-one"]
+        ).fit(states)
+    with pytest.raises(ValueError, match="state_attributes must contain 3"):
+        Transitioner(
+            A=adjacency, T=0.002, state_attributes=["rest", "task"]
+        ).fit(states)
+
+
 def test_transitioner_can_use_pre_normalized_adjacency(transition_data):
     adjacency, states = transition_data
     transitioner = Transitioner(
@@ -614,7 +657,7 @@ def test_transitioner_masks_a_4d_nifti_image(transition_data):
         np.array([1, 2], dtype=np.int16).reshape(2, 1, 1), np.eye(4)
     )
     image = nib.Nifti1Image(states.T.reshape(2, 1, 1, 3), np.eye(4))
-    masker = NiftiLabelsMasker(labels_img=labels, standardize=None, reports=False)
+    masker = NiftiLabelsMasker(labels_img=labels, standardize=None, reports=False, keep_masked_labels=False)
     transitioner = Transitioner(
         A=adjacency,
         T=0.002,

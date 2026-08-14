@@ -94,6 +94,11 @@ energy = transitioner.fit_transform(states_img)
 Using a masker as a component keeps the numerical API available to users with
 non-neuroimaging arrays while allowing images to be masked directly.
 
+When neither `node_attributes` nor `state_attributes` is supplied,
+`Transitioner.transform` returns the traditional NumPy array. Supplying either
+kind of metadata returns a labelled pandas DataFrame. The metadata must contain
+one value per node or state, respectively.
+
 ### Caching
 
 `Transitioner` inherits Nilearn's `CacheMixin`. Set `memory` to a directory or
@@ -177,8 +182,14 @@ result = get_state_to_state_df(
 )
 ```
 
-This produces transition fields named `source_condition`, `target_condition`,
-`source_state`, and `target_state`. Additional levels produce corresponding
-source and target fields. Flat list-like state attributes retain the
+This preserves the state hierarchy in the row-index level names: `source` and
+`target` are the outer components and the original names (`condition` and
+`state`) are the inner components. Flat list-like state attributes retain the
 traditional `source_state` and `target_state` fields. `state_attributes` is
 the only state metadata parameter.
+
+### Integrating control inputs
+
+Use `state_to_state_integration` to integrate squared control inputs over time
+for each transition. The former `state_to_state_aggregation` name remains as a
+compatibility alias.

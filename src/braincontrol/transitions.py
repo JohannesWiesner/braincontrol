@@ -17,17 +17,12 @@ from nilearn._utils.cache_mixin import CacheMixin
 from sklearn.base import BaseEstimator, TransformerMixin, clone
 from sklearn.utils.validation import check_is_fitted
 
-# FIXME: Define these options in _validate_transition_inputs
-_TRANSITION_ORDERS = ("combinations", "permutations", "product", "stability")
-_ENERGY_TYPES = ("minimal", "optimal")
-
 ########################################################################################
 ## Input validation
 ########################################################################################
 
-
 def _as_2d_float_array(value, name):
-    """Validate that input matrix is 2D and has only finited values"""
+    """Return a finite, two-dimensional floating-point array."""
     array = np.asarray(value, dtype=float)
     if array.ndim != 2:
         raise ValueError(f"{name} must be a two-dimensional array")
@@ -36,7 +31,7 @@ def _as_2d_float_array(value, name):
     return array
 
 def _resolve_square_matrix(value, name, n_nodes):
-    """Validate that input matrix is square-like and has number of nodes"""
+    """Return a square matrix with one row and column per node."""
     if isinstance(value, str):
         if value != "identity":
             raise ValueError(f"{name} must be an array or 'identity'")
@@ -49,13 +44,95 @@ def _resolve_square_matrix(value, name, n_nodes):
         )
     return matrix
 
+def _validate_choice(value, name, choices):
+    """Validate an enumerated option and return it unchanged."""
+    if value not in choices:
+        formatted_choices = ", ".join(repr(choice) for choice in choices)
+        raise ValueError(
+            f"{name} must be one of {formatted_choices}; got {value!r}"
+        )
+    return value
 
-def _validate_transition_inputs(A, T, B, X, rho, S, energy_type, order, system):
-    """Validate all inputs to compute control energy"""
+def _validate_normalization_inputs(normalize_A, c):
+    """Validate adjacency-normalization parameters."""
+    if not isinstance(normalize_A, (bool, np.bool_)):
+        raise TypeError("normalize_A must be a boolean")
+    if (
+        isinstance(c, (bool, np.bool_))
+        or not isinstance(c, (int, float, np.integer, np.floating))
+        or not np.isfinite(c)
+        or c <= 0
+    ):
+        raise ValueError("c must be a positive finite number")
+    return bool(normalize_A), float(c)
+
+# TODO: It seems like the second output (the boolean) is never used elsewhere?
+def _resolve_state_input(X=None, x0=None, xf=None):
+    """Return state input and whether it represents one explicit pair."""
+    endpoints_provided = x0 is not None or xf is not None
+    if X is not None and endpoints_provided:
+        raise ValueError("Provide either X or x0 and xf, not both")
+    if X is not None:
+        return X, False
+    if x0 is None and xf is None:
+        raise ValueError("Provide either X or both x0 and xf")
+    if x0 is None or xf is None:
+        raise ValueError("x0 and xf must be provided together")
+
+    endpoint_arrays = []
+    endpoint_is_numeric = []
+    for endpoint, name in ((x0, "x0"), (xf, "xf")):
+        try:
+            array = np.asarray(endpoint)
+        except Exception:
+            array = None
+        is_numeric = array is not None and np.issubdtype(array.dtype, np.number)
+        endpoint_is_numeric.append(is_numeric)
+        if is_numeric:
+            if array.ndim != 1:
+                raise ValueError(f"{name} must be a one-dimensional state")
+            endpoint_arrays.append(array)
+
+    if all(endpoint_is_numeric):
+        if endpoint_arrays[0].shape != endpoint_arrays[1].shape:
+            raise ValueError("x0 and xf must contain the same number of nodes")
+        return np.stack(endpoint_arrays), True
+    if any(endpoint_is_numeric):
+        raise TypeError("x0 and xf must use the same input type")
+    return [x0, xf], True
+
+def _validate_transition_inputs(
+    A,
+    T,
+    B,
+    X,
+    rho,
+    S,
+    energy_type,
+    order,
+    system,
+    *,
+    normalize_A=False,
+    c=1,
+):
+    """Validate and normalize inputs used to compute control energy."""
+
+    order = _validate_choice(
+        order,
+        "order",
+        ("combinations", "permutations", "product", "stability"),
+    )
+    energy_type = _validate_choice(
+        energy_type, "energy_type", ("minimal", "optimal")
+    )
+    system = _validate_choice(system, "system", ("continuous", "discrete"))
+    normalize_A, c = _validate_normalization_inputs(normalize_A, c)
 
     A = _as_2d_float_array(A, "A")
     if A.shape[0] != A.shape[1]:
         raise ValueError(f"A must be square; got shape {A.shape}")
+    if normalize_A:
+        A = matrix_normalization(A, system=system, c=c)
 
     X = _as_2d_float_array(X, "X")
     n_nodes = A.shape[0]
@@ -65,16 +142,6 @@ def _validate_transition_inputs(A, T, B, X, rho, S, energy_type, order, system):
             f"got {X.shape[1]} columns for {n_nodes} nodes"
         )
 
-    if order not in _TRANSITION_ORDERS:
-        choices = ", ".join(repr(choice) for choice in _TRANSITION_ORDERS)
-        raise ValueError(f"order must be one of {choices}; got {order!r}")
-    if energy_type not in _ENERGY_TYPES:
-        choices = ", ".join(repr(choice) for choice in _ENERGY_TYPES)
-        raise ValueError(
-            f"energy_type must be one of {choices}; got {energy_type!r}"
-        )
-    if system not in ("continuous", "discrete"):
-        raise ValueError("system must be 'continuous' or 'discrete'")
     if not np.isscalar(T) or not np.isfinite(T) or T <= 0:
         raise ValueError("T must be a positive number")
     if system == "discrete" and (int(T) != T or T < 2):
@@ -111,9 +178,11 @@ def _set_transition_order(n_states, order):
         raise TypeError("n_states must be an integer")
     if n_states < 1:
         raise ValueError("n_states must be at least 1")
-    if order not in _TRANSITION_ORDERS:
-        choices = ", ".join(repr(choice) for choice in _TRANSITION_ORDERS)
-        raise ValueError(f"order must be one of {choices}; got {order!r}")
+    order = _validate_choice(
+        order,
+        "order",
+        ("combinations", "permutations", "product", "stability"),
+    )
 
     indices = range(n_states)
     if order == "permutations":
@@ -131,6 +200,7 @@ def _set_transition_order(n_states, order):
     ]
     return len(transition_indices), transition_indices
 
+# FIXME: This function should not validate input
 def state_to_state_transition(
     A,
     T,
@@ -231,8 +301,7 @@ def state_to_state_transition(
 
     return trajectory_array, control_input_array, error_array
 
-# FIXME: Should be renamed to state_to_state_integration
-def state_to_state_aggregation(control_inputs):
+def state_to_state_integration(control_inputs):
     """Integrate squared control inputs over time for every transition."""
     control_inputs = np.asarray(control_inputs, dtype=float)
     if control_inputs.ndim != 3:
@@ -248,6 +317,11 @@ def state_to_state_aggregation(control_inputs):
     for transition in range(n_transitions):
         energies[transition] = integrate_u(control_inputs[:, :, transition])
     return energies
+
+
+def state_to_state_aggregation(control_inputs):
+    """Alias for :func:`state_to_state_integration` for compatibility."""
+    return state_to_state_integration(control_inputs)
 
 
 def get_transition_info(state_attributes, order):
@@ -302,9 +376,7 @@ def _coerce_attributes(attributes, expected_length, parameter_name):
     return index
 
 
-def _attribute_level_names(
-    attributes, default_name, attribute_prefix=None, reserved=()
-):
+def _attribute_level_names(attributes, default_name, attribute_prefix=None):
     """Return unique, non-conflicting names for attribute levels."""
     if isinstance(attributes, pd.MultiIndex):
         source_names = attributes.names
@@ -312,7 +384,6 @@ def _attribute_level_names(
         source_names = [attributes.name]
 
     names = []
-    reserved = set(reserved)
     attribute_prefix = attribute_prefix or default_name
     for level, source_name in enumerate(source_names):
         fallback = (
@@ -321,15 +392,18 @@ def _attribute_level_names(
             else f"{attribute_prefix}_attribute_{level}"
         )
         name = source_name
-        if not isinstance(name, str) or not name or name in reserved or name in names:
+        if not isinstance(name, str) or not name or name in names:
             name = fallback
         names.append(name)
     return names
 
-# TODO: This should not flatten multiindeces, but instead add another higher order level with the name "transition"
-# that maps the lower order levels to either "source" or "target" level
-def _state_transition_columns(df, state_attributes, order, n_transitions):
-    """Add source and target columns for every state attribute level."""
+def _state_transition_index(state_attributes, order, n_transitions):
+    """Build a transition index while preserving state-level hierarchy.
+
+    For hierarchical state attributes, ``source`` and ``target`` are the
+    outer components of each index-level name and the original state level
+    name remains the inner component.
+    """
     state_attributes = _coerce_attributes(
         state_attributes, None, "state_attributes"
     )
@@ -341,9 +415,7 @@ def _state_transition_columns(df, state_attributes, order, n_transitions):
             "state_to_state_array rows do not match state_attributes and order"
         )
 
-    level_names = _attribute_level_names(
-        state_attributes, "state", reserved={"transition_name", "value"}
-    )
+    level_names = _attribute_level_names(state_attributes, "state")
     if isinstance(state_attributes, pd.MultiIndex):
         level_values = [
             state_attributes.get_level_values(level).to_numpy()
@@ -352,21 +424,35 @@ def _state_transition_columns(df, state_attributes, order, n_transitions):
     else:
         level_values = [state_attributes.to_numpy()]
 
-    transition_columns = []
-    for level_name, values in zip(level_names, level_values):
-        source_column = f"source_{level_name}"
-        target_column = f"target_{level_name}"
-        df[source_column] = [values[source] for _, source, _ in transition_indices]
-        df[target_column] = [values[target] for _, _, target in transition_indices]
-        transition_columns.extend([source_column, target_column])
-
-    source_name, target_name = transition_columns[-2:]
-    df["transition_name"] = [
-        f"{source}-{target}"
-        for source, target in zip(df[source_name], df[target_name])
+    source_arrays = [
+        [values[source] for _, source, _ in transition_indices]
+        for values in level_values
     ]
-    transition_columns.append("transition_name")
-    return transition_columns
+    target_arrays = [
+        [values[target] for _, _, target in transition_indices]
+        for values in level_values
+    ]
+    transition_names = [
+        f"{source}-{target}"
+        for source, target in zip(source_arrays[-1], target_arrays[-1])
+    ]
+
+    if isinstance(state_attributes, pd.MultiIndex):
+        names = [
+            *(("source", level_name) for level_name in level_names),
+            *(("target", level_name) for level_name in level_names),
+            ("transition", "name"),
+        ]
+    else:
+        names = [
+            f"source_{level_names[0]}",
+            f"target_{level_names[0]}",
+            "transition_name",
+        ]
+
+    return pd.MultiIndex.from_arrays(
+        [*source_arrays, *target_arrays, transition_names], names=names
+    )
 
 def get_state_to_state_df(
     state_to_state_array,
@@ -390,11 +476,11 @@ def get_state_to_state_df(
         metadata.
     state_attributes : list-like or MultiIndex-like, optional
         One label or tuple of hierarchical labels per state. A pandas
-        ``MultiIndex`` is expanded into paired ``source_<level>`` and
-        ``target_<level>`` transition fields. Tuple-based list-like values are
-        converted to a ``MultiIndex``. Flat values produce the traditional
-        ``source_state`` and ``target_state`` fields. This is the only
-        parameter for state metadata.
+        ``MultiIndex`` is preserved through hierarchical ``("source",
+        <level>)`` and ``("target", <level>)`` row-index names. Tuple-based
+        list-like values are converted to a ``MultiIndex``. Flat values
+        produce the traditional ``source_state`` and ``target_state`` fields.
+        This is the only parameter for state metadata.
     Returns
     -------
     pandas.DataFrame
@@ -409,18 +495,12 @@ def get_state_to_state_df(
             node_attributes, n_nodes, "node_attributes"
         )
 
-    df = pd.DataFrame(values)
-    transition_columns = []
-
+    transition_index = None
     if state_attributes is not None:
-        transition_columns = _state_transition_columns(
-            df, state_attributes, order, n_transitions
+        transition_index = _state_transition_index(
+            state_attributes, order, n_transitions
         )
-
-    if transition_columns:
-        df = df.set_index(transition_columns)
-    df.columns = node_attributes
-    return df
+    return pd.DataFrame(values, index=transition_index, columns=node_attributes)
 
 def get_transition_df(
     A,
@@ -450,11 +530,41 @@ def get_transition_df(
         order=order,
         **transition_keywords,
     )
-    energies = state_to_state_aggregation(control_inputs)
+    energies = state_to_state_integration(control_inputs)
     return get_state_to_state_df(energies, order=order, **kwargs)
 
-# FIXME: Update docstring
-# FIXME: Add node_attributes and state_attributes
+# FIXME: Remove this functionality for now (both from transitions.py and from test_transitions.py)
+def state_to_state_comparison(X, func, order="permutations"):
+    """Apply a pairwise operation to requested source and target states."""
+    X = _as_2d_float_array(X, "X")
+    n_transitions, transition_indices = _set_transition_order(X.shape[0], order)
+
+    if func == "difference":
+        operation = np.subtract
+    elif func == "sum":
+        operation = np.add
+    elif callable(func):
+        operation = func
+    else:
+        raise ValueError("func must be 'difference', 'sum', or a callable")
+
+    comparisons = np.empty((n_transitions, X.shape[1]))
+    for transition, source, target in transition_indices:
+        result = np.asarray(operation(X[source], X[target]), dtype=float)
+        if result.shape != (X.shape[1],):
+            raise ValueError(
+                "func must return one value per node; "
+                f"got shape {result.shape}"
+            )
+        comparisons[transition] = result
+    return comparisons
+
+# FIXME: Remove this functionality for now (both from transitions.py and from test_transitions.py)
+def get_state_comparison_df(X, func, order="permutations", **kwargs):
+    """Apply a pairwise state operation and return a labelled DataFrame."""
+    comparisons = state_to_state_comparison(X, func=func, order=order)
+    return get_state_to_state_df(comparisons, order=order, **kwargs)
+
 class Transitioner(
     TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output_keys=None
 ):
@@ -475,10 +585,33 @@ class Transitioner(
 
     Parameters
     ----------
+    A : array-like of shape (n_nodes, n_nodes)
+        Adjacency matrix. It is normalized during :meth:`fit` when
+        ``normalize_A=True``.
+    T : float
+        Positive time horizon. Discrete systems require an integer of at least
+        two.
+    B : array-like of shape (n_nodes, n_nodes) or ``"identity"``
+        Control input matrix.
+    rho : float or None, default=1
+        Positive mixing parameter for optimal control energy.
+    S : array-like, ``"identity"``, or None, default="identity"
+        State-trajectory constraint matrix for optimal control energy.
     energy_type : {"minimal", "optimal"}, default="optimal"
         Type of control energy to compute. ``"minimal"`` is mutually exclusive
         with ``rho`` and ``S``, so both must be ``None``. ``"optimal"`` requires
         both parameters to be provided.
+    order : {"combinations", "permutations", "product", "stability"}, \
+            default="permutations"
+        State-pair selection and ordering.
+    system : {"continuous", "discrete"}, default="continuous"
+        Time system used for adjacency normalization and control computation.
+    xr : array-like or str, default="zero"
+        Reference state forwarded to :func:`nctpy.energies.get_control_inputs`.
+    expm_version : {"scipy", "eig"}, default="scipy"
+        Matrix-exponential implementation forwarded to ``nctpy``.
+    masker : transformer, optional
+        Scikit-learn compatible masker used for image-like state inputs.
     normalize_A : bool, default=True
         If ``True``, normalize ``A`` during :meth:`fit` with
         :func:`nctpy.utils.matrix_normalization` for the selected ``system``.
@@ -493,6 +626,12 @@ class Transitioner(
         Cache state-transition computations when this value is at least 1.
     verbose : int, default=0
         Verbosity forwarded to Nilearn's caching infrastructure.
+    node_attributes : list-like or MultiIndex-like, optional
+        Labels for nodes. When supplied, :meth:`transform` returns a DataFrame
+        whose columns preserve these labels.
+    state_attributes : list-like or MultiIndex-like, optional
+        Labels for states. When supplied, :meth:`transform` returns a DataFrame
+        whose row index identifies each source-target transition.
     """
 
     def __init__(
@@ -513,6 +652,8 @@ class Transitioner(
         verbose=0,
         normalize_A=True,
         c=1,
+        node_attributes=None,
+        state_attributes=None,
     ):
         self.A = A
         self.T = T
@@ -530,6 +671,8 @@ class Transitioner(
         self.verbose = verbose
         self.normalize_A = normalize_A
         self.c = c
+        self.node_attributes = node_attributes
+        self.state_attributes = state_attributes
 
     @staticmethod
     def _is_state_matrix(X):
@@ -539,43 +682,10 @@ class Transitioner(
             return False
         return array.ndim == 2 and np.issubdtype(array.dtype, np.number)
 
-    # FIXME: Input validation should happen in _validate_transition_inputs if possible
     @staticmethod
     def _resolve_state_input(X=None, x0=None, xf=None):
-        """Return state input and whether it represents one explicit pair."""
-        endpoints_provided = x0 is not None or xf is not None
-        if X is not None and endpoints_provided:
-            raise ValueError("Provide either X or x0 and xf, not both")
-        if X is not None:
-            return X, False
-        if x0 is None and xf is None:
-            raise ValueError("Provide either X or both x0 and xf")
-        if x0 is None or xf is None:
-            raise ValueError("x0 and xf must be provided together")
-
-        endpoint_arrays = []
-        endpoint_is_numeric = []
-        for endpoint, name in ((x0, "x0"), (xf, "xf")):
-            try:
-                array = np.asarray(endpoint)
-            except Exception:
-                array = None
-            is_numeric = array is not None and np.issubdtype(
-                array.dtype, np.number
-            )
-            endpoint_is_numeric.append(is_numeric)
-            if is_numeric:
-                if array.ndim != 1:
-                    raise ValueError(f"{name} must be a one-dimensional state")
-                endpoint_arrays.append(array)
-
-        if all(endpoint_is_numeric):
-            if endpoint_arrays[0].shape != endpoint_arrays[1].shape:
-                raise ValueError("x0 and xf must contain the same number of nodes")
-            return np.stack(endpoint_arrays), True
-        if any(endpoint_is_numeric):
-            raise TypeError("x0 and xf must use the same input type")
-        return [x0, xf], True
+        """Delegate state-input validation to the shared validation helper."""
+        return _resolve_state_input(X=X, x0=x0, xf=xf)
 
     def _fit_states(self, X):
         if self._is_state_matrix(X):
@@ -599,32 +709,10 @@ class Transitioner(
     def fit(self, X=None, y=None, *, x0=None, xf=None):
         """Fit the optional image masker and validate the transition inputs."""
         self._fit_cache()
-        state_input, _ = self._resolve_state_input(X=X, x0=x0, xf=xf)
+        state_input, _ = _resolve_state_input(X=X, x0=x0, xf=xf)
         states = self._fit_states(state_input)
-
-        # FIXME: Input validation should happen in _validate_transition_inputs if possible
-        if not isinstance(self.normalize_A, (bool, np.bool_)):
-            raise TypeError("normalize_A must be a boolean")
-        if (
-            isinstance(self.c, (bool, np.bool_)) # FIXME:c must not be a bool
-            or not isinstance(self.c, (int, float, np.integer, np.floating))
-            or not np.isfinite(self.c)
-            or self.c <= 0
-        ):
-            raise ValueError("c must be a positive finite number")
-        self.c_ = float(self.c)
-        adjacency = _as_2d_float_array(self.A, "A")
-        # FIXME: Input validation should happen in _validate_transition_inputs if possible
-        if adjacency.shape[0] != adjacency.shape[1]:
-            raise ValueError(f"A must be square; got shape {adjacency.shape}")
-        if self.system not in ("continuous", "discrete"):
-            raise ValueError("system must be 'continuous' or 'discrete'")
-        if self.normalize_A:
-            adjacency = matrix_normalization(
-                adjacency, system=self.system, c=self.c_
-            )
         A, T, B, _, rho, S = _validate_transition_inputs(
-            adjacency,
+            self.A,
             self.T,
             self.B,
             states,
@@ -633,7 +721,10 @@ class Transitioner(
             self.energy_type,
             self.order,
             self.system,
+            normalize_A=self.normalize_A,
+            c=self.c,
         )
+        self.c_ = float(self.c) # FIXME: conversion to float should be done in _validate_transition_inputs?
         self.A_ = A
         self.T_ = T
         self.B_ = B
@@ -641,18 +732,39 @@ class Transitioner(
         self.rho_ = rho
         self.n_features_in_ = states.shape[1]
         self.n_states_in_ = states.shape[0]
+        self.node_attributes_ = (
+            None
+            if self.node_attributes is None
+            else _coerce_attributes(
+                self.node_attributes, states.shape[1], "node_attributes"
+            )
+        )
+        self.state_attributes_ = (
+            None
+            if self.state_attributes is None
+            else _coerce_attributes(
+                self.state_attributes, states.shape[0], "state_attributes"
+            )
+        )
         return self
 
     def transform(self, X=None, *, x0=None, xf=None):
         """Return integrated control energy with shape transitions by nodes."""
         check_is_fitted(self, attributes=["A_", "B_", "S_", "masker_"])
-        state_input, explicit_pair = self._resolve_state_input(
-            X=X, x0=x0, xf=xf
-        )
+        state_input, explicit_pair = _resolve_state_input(X=X, x0=x0, xf=xf)
         states = self._transform_states(state_input)
         if states.shape[1] != self.n_features_in_:
             raise ValueError(
                 f"X has {states.shape[1]} nodes, but fit saw {self.n_features_in_}"
+            )
+        if (
+            self.state_attributes_ is not None
+            and len(self.state_attributes_) != states.shape[0]
+        ):
+            raise ValueError(
+                "state_attributes must contain one value per transformed state; "
+                f"got {len(self.state_attributes_)} values for "
+                f"{states.shape[0]} states"
             )
 
         transition_order = "combinations" if explicit_pair else self.order
@@ -678,8 +790,16 @@ class Transitioner(
         self.transition_indices_ = [
             (source, target) for _, source, target in indices
         ]
-        self.energies_ = state_to_state_aggregation(self.control_inputs_)
-        return self.energies_
+        self.energies_ = state_to_state_integration(self.control_inputs_)
+        if self.node_attributes_ is None and self.state_attributes_ is None:
+            return self.energies_
+        self.energies_df_ = get_state_to_state_df(
+            self.energies_,
+            order=transition_order,
+            node_attributes=self.node_attributes_,
+            state_attributes=self.state_attributes_,
+        )
+        return self.energies_df_
 
     def fit_transform(self, X=None, y=None, *, x0=None, xf=None):
         """Fit and transform states supplied as ``X`` or as ``x0`` and ``xf``."""
@@ -701,16 +821,19 @@ class Transitioner(
         """Return names for the node-level energy columns."""
         check_is_fitted(self, attributes=["n_features_in_"])
         if input_features is not None:
-            input_features = np.asarray(input_features, dtype=object)
-            if len(input_features) != self.n_features_in_:
-                raise ValueError(
-                    "input_features must contain one name per fitted node"
-                )
-            return input_features
-        return np.asarray(
-            [f"node_{index}" for index in range(self.n_features_in_)],
-            dtype=object,
-        )
+            names = _coerce_attributes(
+                input_features, self.n_features_in_, "input_features"
+            )
+        elif self.node_attributes_ is not None:
+            names = self.node_attributes_
+        else:
+            names = [
+                f"node_{index}" for index in range(self.n_features_in_)
+            ]
+        result = np.empty(self.n_features_in_, dtype=object)
+        result[:] = list(names)
+        return result
+
 
 __all__ = [
     "Transitioner",
@@ -720,5 +843,6 @@ __all__ = [
     "get_transition_info",
     "state_to_state_aggregation",
     "state_to_state_comparison",
+    "state_to_state_integration",
     "state_to_state_transition",
 ]
