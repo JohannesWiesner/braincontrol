@@ -318,7 +318,7 @@ def state_to_state_integration(control_inputs):
         energies[transition] = integrate_u(control_inputs[:, :, transition])
     return energies
 
-
+# FIXME: Remove this alias both from transitions.py but also from test_transitions.py
 def state_to_state_aggregation(control_inputs):
     """Alias for :func:`state_to_state_integration` for compatibility."""
     return state_to_state_integration(control_inputs)
