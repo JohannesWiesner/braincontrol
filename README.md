@@ -191,5 +191,4 @@ the only state metadata parameter.
 ### Integrating control inputs
 
 Use `state_to_state_integration` to integrate squared control inputs over time
-for each transition. The former `state_to_state_aggregation` name remains as a
-compatibility alias.
+for each transition.

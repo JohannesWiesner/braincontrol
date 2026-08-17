@@ -15,12 +15,9 @@ from braincontrol.transitions import (
     Transitioner,
     _set_transition_order,
     _validate_transition_inputs,
-    get_state_comparison_df,
     get_state_to_state_df,
     get_transition_df,
     get_transition_info,
-    state_to_state_aggregation,
-    state_to_state_comparison,
     state_to_state_integration,
     state_to_state_transition,
 )
@@ -31,6 +28,34 @@ def transition_data():
     adjacency = np.array([[-1.0, 0.1], [0.1, -1.2]])
     states = np.array([[1.0, 0.0], [0.0, 1.0], [0.5, 0.25]])
     return adjacency, states
+
+
+def _compute_validated_transition(
+    A,
+    T,
+    B,
+    X,
+    rho=1,
+    S="identity",
+    energy_type="optimal",
+    order="permutations",
+    system="continuous",
+):
+    """Validate test inputs before calling the low-level compute function."""
+    A, T, B, X, rho, S, _ = _validate_transition_inputs(
+        A, T, B, X, rho, S, energy_type, order, system
+    )
+    return state_to_state_transition(
+        A=A,
+        T=T,
+        B=B,
+        X=X,
+        rho=rho,
+        S=S,
+        energy_type=energy_type,
+        order=order,
+        system=system,
+    )
 
 
 @pytest.mark.parametrize(
@@ -79,7 +104,7 @@ def test_set_transition_order_rejects_invalid_order():
 def test_transition_matches_nctpy(transition_data):
     adjacency, states = transition_data
     horizon = 0.002
-    trajectories, controls, errors = state_to_state_transition(
+    trajectories, controls, errors = _compute_validated_transition(
         A=adjacency,
         T=horizon,
         B="identity",
@@ -106,15 +131,12 @@ def test_transition_matches_nctpy(transition_data):
     energies = state_to_state_integration(controls)
     assert energies.shape == (6, 2)
     np.testing.assert_allclose(energies[0], integrate_u(expected_u))
-    np.testing.assert_array_equal(
-        state_to_state_aggregation(controls), energies
-    )
 
 
-def test_transition_validates_node_count(transition_data):
+def test_transition_dataframe_validates_node_count(transition_data):
     adjacency, states = transition_data
     with pytest.raises(ValueError, match="one column per node"):
-        state_to_state_transition(
+        get_transition_df(
             adjacency, 0.002, "identity", states[:, :1], order="permutations"
         )
 
@@ -137,7 +159,7 @@ def test_validate_transition_inputs_rejects_invalid_order(transition_data):
 
 def test_minimal_energy_matches_zero_trajectory_penalty(transition_data):
     adjacency, states = transition_data
-    minimum = state_to_state_transition(
+    minimum = _compute_validated_transition(
         adjacency,
         0.002,
         "identity",
@@ -147,7 +169,7 @@ def test_minimal_energy_matches_zero_trajectory_penalty(transition_data):
         energy_type="minimal",
         order="combinations",
     )
-    explicit = state_to_state_transition(
+    explicit = _compute_validated_transition(
         adjacency,
         0.002,
         "identity",
@@ -175,14 +197,16 @@ def test_energy_type_validates_rho_and_S(
 ):
     adjacency, states = transition_data
     with pytest.raises(ValueError, match=message):
-        state_to_state_transition(
+        _validate_transition_inputs(
             adjacency,
             0.002,
             "identity",
             states,
-            rho=rho,
-            S=S,
-            energy_type=energy_type,
+            rho,
+            S,
+            energy_type,
+            "permutations",
+            "continuous",
         )
 
 
@@ -214,7 +238,7 @@ def test_transitioner_accepts_minimal_energy_with_rho_and_S_none(
 def test_discrete_transition_preserves_integer_horizon():
     adjacency = np.diag([0.3, 0.2])
     states = np.array([[1.0, 0.0], [0.0, 1.0]])
-    trajectories, controls, errors = state_to_state_transition(
+    trajectories, controls, errors = _compute_validated_transition(
         adjacency,
         2,
         "identity",
@@ -249,6 +273,12 @@ def test_transitioner_is_the_only_public_transition_class():
     assert transitions.__all__[0] == "Transitioner"
     assert not hasattr(transitions, "TransitionTransformer")
     assert not hasattr(transitions, "StateTransitionTransformer")
+
+
+def test_removed_transition_helpers_are_not_public():
+    assert not hasattr(transitions, "state_to_state_aggregation")
+    assert not hasattr(transitions, "state_to_state_comparison")
+    assert not hasattr(transitions, "get_state_comparison_df")
 
 
 def test_state_attributes_accept_a_named_index():
@@ -430,21 +460,6 @@ def test_node_attributes_validate_input_and_length():
         )
 
 
-def test_state_comparison_supports_names_and_custom_callables(transition_data):
-    _, states = transition_data
-    differences = state_to_state_comparison(states, "difference", "combinations")
-    np.testing.assert_array_equal(differences[0], states[0] - states[1])
-
-    products = get_state_comparison_df(
-        states,
-        lambda source, target: source * target,
-        order="combinations",
-        state_attributes=["rest", "task", "recovery"],
-    )
-    assert isinstance(products, pd.DataFrame)
-    assert products.shape == (3, 2)
-
-
 def test_transition_dataframe_end_to_end(transition_data):
     adjacency, states = transition_data
     result = get_transition_df(
@@ -539,6 +554,7 @@ def test_transitioner_normalizes_adjacency_by_default(transition_data):
     expected = matrix_normalization(adjacency, system="continuous", c=1)
     np.testing.assert_allclose(transitioner.A_, expected)
     assert transitioner.c_ == 1.0
+    assert isinstance(transitioner.c_, float)
 
 
 @pytest.mark.parametrize("system", ["continuous", "discrete"])
