@@ -104,7 +104,7 @@ def test_set_transition_order_rejects_invalid_order():
 def test_transition_matches_nctpy(transition_data):
     adjacency, states = transition_data
     horizon = 0.002
-    trajectories, controls, errors = _compute_validated_transition(
+    trajectories, control_trajectories, errors = _compute_validated_transition(
         A=adjacency,
         T=horizon,
         B="identity",
@@ -122,13 +122,13 @@ def test_transition_matches_nctpy(transition_data):
     )
 
     assert trajectories.shape == (3, 2, 6)
-    assert controls.shape == (3, 2, 6)
+    assert control_trajectories.shape == (3, 2, 6)
     assert errors.shape == (6, 2)
     np.testing.assert_allclose(trajectories[:, :, 0], expected_x)
-    np.testing.assert_allclose(controls[:, :, 0], expected_u)
+    np.testing.assert_allclose(control_trajectories[:, :, 0], expected_u)
     np.testing.assert_allclose(errors[0], expected_error)
 
-    energies = state_to_state_integration(controls)
+    energies = state_to_state_integration(control_trajectories)
     assert energies.shape == (6, 2)
     np.testing.assert_allclose(energies[0], integrate_u(expected_u))
 
@@ -238,7 +238,7 @@ def test_transitioner_accepts_minimal_energy_with_rho_and_S_none(
 def test_discrete_transition_preserves_integer_horizon():
     adjacency = np.diag([0.3, 0.2])
     states = np.array([[1.0, 0.0], [0.0, 1.0]])
-    trajectories, controls, errors = _compute_validated_transition(
+    trajectories, control_trajectories, errors = _compute_validated_transition(
         adjacency,
         2,
         "identity",
@@ -247,7 +247,7 @@ def test_discrete_transition_preserves_integer_horizon():
         system="discrete",
     )
     assert trajectories.shape == (3, 2, 1)
-    assert controls.shape == (2, 2, 1)
+    assert control_trajectories.shape == (2, 2, 1)
     assert errors.shape == (1, 2)
 
 
@@ -260,12 +260,12 @@ def test_transition_info_matches_transition_order():
     ]
 
 
-def test_state_to_state_dataframe_has_only_generic_attribute_parameters():
+def test_state_to_state_dataframe_has_only_label_parameters():
     assert list(inspect.signature(get_state_to_state_df).parameters) == [
         "state_to_state_array",
         "order",
-        "node_attributes",
-        "state_attributes",
+        "node_labels",
+        "state_labels",
     ]
 
 
@@ -281,26 +281,22 @@ def test_removed_transition_helpers_are_not_public():
     assert not hasattr(transitions, "get_state_comparison_df")
 
 
-def test_state_attributes_accept_a_named_index():
-    state_attributes = pd.Index(["rest", "task"], name="condition")
+def test_state_labels_accept_a_named_index():
+    state_labels = pd.Index(["rest", "task"], name="condition")
     result = get_state_to_state_df(
         np.ones((2, 1)),
         "stability",
-        state_attributes=state_attributes,
+        state_labels=state_labels,
     )
-    assert result.index.names == [
-        "source_condition",
-        "target_condition",
-        "transition_name",
-    ]
-    assert result.index.get_level_values("transition_name").tolist() == [
-        "rest-rest",
-        "task-task",
+    assert result.index.names == ["endpoint", "condition"]
+    assert result.index.tolist() == [
+        (("source", "target"), ("rest", "rest")),
+        (("source", "target"), ("task", "task")),
     ]
 
 
-def test_state_attributes_accept_multiindex_like_tuples():
-    state_attributes = [
+def test_state_labels_accept_multiindex_like_tuples():
+    state_labels = [
         ("baseline", "rest"),
         ("active", "task"),
         ("baseline", "recovery"),
@@ -308,46 +304,42 @@ def test_state_attributes_accept_multiindex_like_tuples():
     result = get_state_to_state_df(
         np.ones((3, 1)),
         "combinations",
-        state_attributes=state_attributes,
+        state_labels=state_labels,
     )
     assert result.index.names == [
-        ("source", "state_attribute_0"),
-        ("source", "state_attribute_1"),
-        ("target", "state_attribute_0"),
-        ("target", "state_attribute_1"),
-        ("transition", "name"),
+        "endpoint",
+        "state_label_0",
+        "state_label_1",
     ]
     assert result.index[0] == (
-        "baseline",
-        "rest",
-        "active",
-        "task",
-        "rest-task",
+        ("source", "target"),
+        ("baseline", "active"),
+        ("rest", "task"),
     )
 
 
-def test_state_attributes_validate_input_and_transition_count():
-    with pytest.raises(ValueError, match="rows do not match state_attributes"):
+def test_state_labels_validate_input_and_transition_count():
+    with pytest.raises(ValueError, match="rows do not match state_labels"):
         get_state_to_state_df(
             np.ones((2, 1)),
             "combinations",
-            state_attributes=["rest", "task", "recovery"],
+            state_labels=["rest", "task", "recovery"],
         )
     with pytest.raises(TypeError, match="list-like or MultiIndex-like"):
         get_state_to_state_df(
             np.ones((1, 1)),
             "stability",
-            state_attributes={"state": ["rest"]},
+            state_labels={"state": ["rest"]},
         )
 
 
-def test_state_to_state_dataframe_with_hierarchical_attributes():
+def test_state_to_state_dataframe_with_hierarchical_labels():
     energies = np.arange(12, dtype=float).reshape(6, 2)
-    node_attributes = pd.MultiIndex.from_arrays(
+    node_labels = pd.MultiIndex.from_arrays(
         [["hemisphere", "hemisphere"], ["left", "right"]],
         names=["node_group", "node_name"],
     )
-    state_attributes = pd.MultiIndex.from_arrays(
+    state_labels = pd.MultiIndex.from_arrays(
         [
             ["baseline", "active", "baseline"],
             ["rest", "task", "recovery"],
@@ -355,25 +347,24 @@ def test_state_to_state_dataframe_with_hierarchical_attributes():
         names=["group", "state"],
     )
     kwargs = {
-        "node_attributes": node_attributes,
-        "state_attributes": state_attributes,
+        "node_labels": node_labels,
+        "state_labels": state_labels,
     }
 
     result = get_state_to_state_df(energies, "permutations", **kwargs)
     assert result.shape == (6, 2)
     assert result.index.names == [
-        ("source", "group"),
-        ("source", "state"),
-        ("target", "group"),
-        ("target", "state"),
-        ("transition", "name"),
+        "endpoint",
+        "group",
+        "state",
     ]
-    assert result.columns.equals(node_attributes)
+    assert result.columns.equals(node_labels)
+    np.testing.assert_array_equal(result.to_numpy(), energies)
 
 
 def test_state_to_state_dataframe_accepts_a_multiindex():
     energies = np.arange(12, dtype=float).reshape(3, 4)
-    node_attributes = pd.MultiIndex.from_arrays(
+    node_labels = pd.MultiIndex.from_arrays(
         [
             ["association", "association", "sensory", "sensory"],
             ["default", "default", "visual", "visual"],
@@ -386,77 +377,77 @@ def test_state_to_state_dataframe_accepts_a_multiindex():
     result = get_state_to_state_df(
         energies,
         "combinations",
-        node_attributes=node_attributes,
-        state_attributes=["rest", "task", "recovery"],
+        node_labels=node_labels,
+        state_labels=["rest", "task", "recovery"],
     )
     assert result.shape == (3, 4)
-    assert result.columns.equals(node_attributes)
+    assert result.columns.equals(node_labels)
     assert result.columns[2] == ("sensory", "visual", "dorsal", "C")
 
 
-def test_node_attributes_accept_a_list_like_object():
+def test_node_labels_accept_a_list_like_object():
     energies = np.arange(4, dtype=float).reshape(2, 2)
-    node_attributes = pd.Index(
+    node_labels = pd.Index(
         ["shared-label", "shared-label"], name="node"
     )
 
     result = get_state_to_state_df(
-        energies, "stability", node_attributes=node_attributes
+        energies, "stability", node_labels=node_labels
     )
-    assert result.columns.equals(node_attributes)
+    assert result.columns.equals(node_labels)
     np.testing.assert_array_equal(result.to_numpy(), energies)
 
 
-def test_node_attributes_accept_multiindex_like_tuples():
+def test_node_labels_accept_multiindex_like_tuples():
     energies = np.arange(6, dtype=float).reshape(2, 3)
-    node_attributes = [
+    node_labels = [
         ("default", "A"),
         ("default", "B"),
         ("visual", "C"),
     ]
 
     result = get_state_to_state_df(
-        energies, "stability", node_attributes=node_attributes
+        energies, "stability", node_labels=node_labels
     )
     assert isinstance(result.columns, pd.MultiIndex)
-    assert result.columns.tolist() == node_attributes
+    assert result.columns.tolist() == node_labels
 
 
 def test_plain_list_creates_a_regular_column_index():
     result = get_state_to_state_df(
         np.ones((1, 2)),
         "stability",
-        node_attributes=["A", "B"],
+        node_labels=["A", "B"],
     )
     assert isinstance(result.columns, pd.Index)
     assert not isinstance(result.columns, pd.MultiIndex)
     assert result.columns.tolist() == ["A", "B"]
 
-def test_node_attributes_validate_input_and_length():
+def test_node_labels_validate_input_and_length():
     energies = np.ones((1, 2))
     with pytest.raises(ValueError, match="must contain 2 values"):
         get_state_to_state_df(
-            energies, "stability", node_attributes=["A"]
+            energies, "stability", node_labels=["A"]
         )
     with pytest.raises(ValueError, match="tuples of equal length"):
         get_state_to_state_df(
             energies,
             "stability",
-            node_attributes=[("network", "A"), ("network", "visual", "B")],
+            node_labels=[("network", "A"), ("network", "visual", "B")],
         )
     with pytest.raises(TypeError, match="list-like or MultiIndex-like"):
         get_state_to_state_df(
-            energies, "stability", node_attributes="not-list-like"
+            energies, "stability", node_labels="not-list-like"
         )
     with pytest.raises(TypeError, match="list-like or MultiIndex-like"):
         get_state_to_state_df(
-            energies, "stability", node_attributes={"node": ["A", "B"]}
+            energies, "stability", node_labels={"node": ["A", "B"]}
         )
     with pytest.raises(TypeError, match="list-like or MultiIndex-like"):
         get_state_to_state_df(
             energies,
             "stability",
-            node_attributes=pd.DataFrame({"node": ["A", "B"]}),
+            node_labels=pd.DataFrame({"node": ["A", "B"]}),
         )
 
 
@@ -469,13 +460,13 @@ def test_transition_dataframe_end_to_end(transition_data):
         X=states,
         order="combinations",
         system="continuous",
-        state_attributes=["rest", "task", "recovery"],
+        state_labels=["rest", "task", "recovery"],
     )
     assert result.shape == (3, 2)
-    assert result.index.get_level_values("transition_name").tolist() == [
-        "rest-task",
-        "rest-recovery",
-        "task-recovery",
+    assert result.index.tolist() == [
+        (("source", "target"), ("rest", "task")),
+        (("source", "target"), ("rest", "recovery")),
+        (("source", "target"), ("task", "recovery")),
     ]
 
 
@@ -490,48 +481,126 @@ def test_transitioner_with_state_matrix(transition_data):
     assert energies.shape == (3, 2)
     assert transitioner.transition_indices_ == [(0, 1), (0, 2), (1, 2)]
     assert transitioner.get_errors().shape == (3, 2)
-    trajectories, controls = transitioner.get_transition_arrays()
-    assert trajectories.shape == controls.shape == (3, 2, 3)
+    trajectories, control_trajectories = transitioner.get_transition_arrays()
+    assert trajectories.shape == control_trajectories.shape == (3, 2, 3)
     assert transitioner.get_feature_names_out().tolist() == ["node_0", "node_1"]
 
 
 def test_transitioner_returns_labelled_dataframe(transition_data):
     adjacency, states = transition_data
-    node_attributes = pd.MultiIndex.from_tuples(
+    node_labels = pd.MultiIndex.from_tuples(
         [("left", "A"), ("right", "B")], names=["hemisphere", "node"]
     )
     transitioner = Transitioner(
         A=adjacency,
         T=0.002,
         order="combinations",
-        node_attributes=node_attributes,
-        state_attributes=["rest", "task", "recovery"],
+        node_labels=node_labels,
+        state_labels=["rest", "task", "recovery"],
     )
 
     energies = transitioner.fit_transform(states)
 
     assert isinstance(energies, pd.DataFrame)
-    assert energies.columns.equals(node_attributes)
-    assert energies.index.names == [
-        "source_state",
-        "target_state",
-        "transition_name",
-    ]
+    assert energies.columns.equals(node_labels)
+    assert energies.index.names == ["endpoint", "state"]
     assert transitioner.get_feature_names_out().tolist() == list(
-        node_attributes
+        node_labels
     )
 
 
-def test_transitioner_validates_metadata_lengths(transition_data):
+def test_transitioner_infers_labels_from_dataframe(transition_data):
     adjacency, states = transition_data
-    with pytest.raises(ValueError, match="node_attributes must contain 2"):
+    node_labels = pd.MultiIndex.from_tuples(
+        [("left", "A"), ("right", "B")], names=["hemisphere", "node"]
+    )
+    state_labels = pd.MultiIndex.from_tuples(
+        [
+            ("baseline", "rest"),
+            ("active", "task"),
+            ("baseline", "recovery"),
+        ],
+        names=["condition", "state"],
+    )
+    states_df = pd.DataFrame(
+        states,
+        index=state_labels,
+        columns=node_labels,
+    )
+
+    inferred = Transitioner(
+        A=adjacency,
+        T=0.002,
+        order="combinations",
+    ).fit_transform(X=states_df)
+    explicit = Transitioner(
+        A=adjacency,
+        T=0.002,
+        order="combinations",
+        node_labels=node_labels,
+        state_labels=state_labels,
+    ).fit_transform(X=states)
+
+    assert isinstance(inferred, pd.DataFrame)
+    assert inferred.columns.equals(node_labels)
+    assert inferred.index.names == [
+        "endpoint",
+        "condition",
+        "state",
+    ]
+    pd.testing.assert_frame_equal(inferred, explicit)
+
+
+def test_transitioner_validates_label_lengths(transition_data):
+    adjacency, states = transition_data
+    with pytest.raises(ValueError, match="node_labels must contain 2"):
         Transitioner(
-            A=adjacency, T=0.002, node_attributes=["only-one"]
+            A=adjacency, T=0.002, node_labels=["only-one"]
         ).fit(states)
-    with pytest.raises(ValueError, match="state_attributes must contain 3"):
+    with pytest.raises(ValueError, match="state_labels must contain 3"):
         Transitioner(
-            A=adjacency, T=0.002, state_attributes=["rest", "task"]
+            A=adjacency, T=0.002, state_labels=["rest", "task"]
         ).fit(states)
+
+
+@pytest.mark.parametrize(
+    ("parameter", "value"),
+    [
+        ("store_trajectories", None),
+        ("store_trajectories", 1),
+        ("store_control_trajectories", "yes"),
+    ],
+)
+def test_transitioner_requires_boolean_storage_options(
+    transition_data, parameter, value
+):
+    adjacency, states = transition_data
+    with pytest.raises(TypeError, match=f"{parameter} must be a boolean"):
+        Transitioner(
+            A=adjacency,
+            T=0.002,
+            **{parameter: value},
+        ).fit(states)
+
+
+def test_transitioner_can_disable_large_array_storage(transition_data):
+    adjacency, states = transition_data
+    transitioner = Transitioner(
+        A=adjacency,
+        T=0.002,
+        order="combinations",
+        store_trajectories=False,
+        store_control_trajectories=False,
+    )
+
+    energies = transitioner.fit_transform(states)
+    trajectories, control_trajectories = transitioner.get_transition_arrays()
+
+    assert energies.shape == (3, 2)
+    assert trajectories is None
+    assert control_trajectories is None
+    assert not hasattr(transitioner, "trajectories_")
+    assert not hasattr(transitioner, "control_trajectories_")
 
 
 def test_transitioner_can_use_pre_normalized_adjacency(transition_data):
@@ -599,10 +668,10 @@ def test_transitioner_accepts_separate_source_and_target_states(transition_data)
         A=adjacency, T=0.002, order="permutations"
     ).fit_transform(x0=states[0], xf=states[1])
     matrix = Transitioner(
-        A=adjacency, T=0.002, order="combinations"
+        A=adjacency, T=0.002, order="permutations"
     ).fit_transform(X=states[:2])
 
-    assert separate.shape == (1, 2)
+    assert separate.shape == (2, 2)
     np.testing.assert_allclose(separate, matrix)
 
 
@@ -614,8 +683,29 @@ def test_transitioner_can_transform_a_separate_source_and_target(
 
     energies = transitioner.transform(x0=states[1], xf=states[2])
 
-    assert energies.shape == (1, 2)
-    assert transitioner.transition_indices_ == [(0, 1)]
+    assert energies.shape == (2, 2)
+    assert transitioner.transition_indices_ == [(0, 1), (1, 0)]
+
+
+@pytest.mark.parametrize(
+    ("order", "expected_indices"),
+    [
+        ("combinations", [(0, 1)]),
+        ("permutations", [(0, 1), (1, 0)]),
+        ("product", [(0, 0), (0, 1), (1, 0), (1, 1)]),
+        ("stability", [(0, 0), (1, 1)]),
+    ],
+)
+def test_separate_states_honor_transition_order(
+    transition_data, order, expected_indices
+):
+    adjacency, states = transition_data
+    transitioner = Transitioner(A=adjacency, T=0.002, order=order)
+
+    energies = transitioner.fit_transform(x0=states[0], xf=states[1])
+
+    assert energies.shape == (len(expected_indices), 2)
+    assert transitioner.transition_indices_ == expected_indices
 
 
 def test_transitioner_requires_one_complete_state_input_mode(transition_data):
@@ -673,7 +763,12 @@ def test_transitioner_masks_a_4d_nifti_image(transition_data):
         np.array([1, 2], dtype=np.int16).reshape(2, 1, 1), np.eye(4)
     )
     image = nib.Nifti1Image(states.T.reshape(2, 1, 1, 3), np.eye(4))
-    masker = NiftiLabelsMasker(labels_img=labels, standardize=None, reports=False, keep_masked_labels=False)
+    masker = NiftiLabelsMasker(
+        labels_img=labels,
+        standardize=None,
+        reports=False,
+        keep_masked_labels=False,
+    )
     transitioner = Transitioner(
         A=adjacency,
         T=0.002,

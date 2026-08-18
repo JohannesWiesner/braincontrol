@@ -1,221 +1,240 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-FIXME: This whole script has to be reworked. The general idea is
-to test with empirical neuroimaging data derived from nilearn.
+"""Opt-in integration tests using empirical neuroimaging data.
 
-@author: johannes.wiesner
+Set ``BRAINCONTROL_RUN_NEUROIMAGING_TESTS=1`` to enable these tests. They
+download Nilearn localizer data, a Schaefer atlas, and a pinned ENIGMA
+structural connectome, so they are skipped during the normal unit-test run.
 """
 
-from nilearn.datasets import fetch_localizer_button_task
-from nilearn.datasets import fetch_localizer_contrasts
-from braincontrol.transitions import Transitioner
-from nilearn.maskers import NiftiLabelsMasker
-from nilearn.plotting import plot_stat_map
-from nilearn.datasets import fetch_atlas_schaefer_2018
-from pathlib import Path
+import os
 from shutil import copyfileobj
 from urllib.request import Request, urlopen
+
 import numpy as np
 import pandas as pd
+import pytest
+from nilearn.datasets import fetch_atlas_schaefer_2018
+from nilearn.datasets import fetch_localizer_contrasts
 from nilearn.image import load_img
+from nilearn.maskers import NiftiLabelsMasker
 
-###############################################################################
-# User settings
-###############################################################################
-
-n_rois = 200
-contrast_names = ["left button press (auditory cue)","right button press (auditory cue)",
-                  "left button press (visual cue)","right button press (visual cue)"]
-
-###############################################################################
-# Download state maps
-###############################################################################
-
-data = fetch_localizer_contrasts(n_subjects=1,contrasts=contrast_names)
-state_imgs_list = data['cmaps']
-state_imgs_4d = load_img(state_imgs_list)
-state_attributes = contrast_names.copy()
-
-# create multiindex for states
-state_attributes_multi = pd.DataFrame({'state':contrast_names})
-state_attributes_multi[["hemisphere", "modality"]] = (
-    state_attributes_multi["state"].str.extract(
-        r"^(left|right).*?\((auditory|visual) cue\)$"
-    )
-)
-state_attributes_multi = pd.MultiIndex.from_frame(state_attributes_multi)
+from braincontrol.transitions import Transitioner
 
 
-###############################################################################
-# Download atlas image
-###############################################################################
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        os.environ.get("BRAINCONTROL_RUN_NEUROIMAGING_TESTS") != "1",
+        reason=(
+            "set BRAINCONTROL_RUN_NEUROIMAGING_TESTS=1 to run networked "
+            "neuroimaging integration tests"
+        ),
+    ),
+]
 
-atlas = fetch_atlas_schaefer_2018(
-    n_rois=n_rois,
-    yeo_networks=7,  # ENIGMA matrix uses the 7-network ordering
-    resolution_mm=1,
-)
-
-atlas_img = atlas['maps']
-atlas_lut = atlas['lut']
-
-# create multiindex for nodes that can be later tested
-atlas_labels_multi = atlas_lut.copy()
-atlas_labels_multi[["hemisphere", "network"]] = atlas_labels_multi["name"].str.extract(
-    r"^\d+Networks_(LH|RH)_(.+)_\d+$"
-)
-atlas_labels_multi = atlas_labels_multi.loc[:,['name','network','hemisphere']]
-atlas_labels_multi = atlas_labels_multi[atlas_labels_multi['name'] != 'Background'].reset_index(drop=True)
-atlas_labels_multi = pd.MultiIndex.from_frame(atlas_labels_multi)
-
-
-###############################################################################
-# download adjacency matrix
-###############################################################################
-
-# Pin the ENIGMA repository revision for reproducibility.
+N_ROIS = 100
+CONTRAST_NAMES = [
+    "left button press (auditory cue)",
+    "right button press (auditory cue)",
+    "left button press (visual cue)",
+    "right button press (visual cue)",
+]
 ENIGMA_REVISION = "b08974b55243060cbc1fad12c87048037446e8f7"
-
-BASE_URL = (
+ENIGMA_BASE_URL = (
     "https://raw.githubusercontent.com/MICA-MNI/ENIGMA/"
     f"{ENIGMA_REVISION}/enigmatoolbox/datasets/"
     "matrices/hcp_connectivity"
 )
 
-def fetch_schaefer_structural_connectome(
-    n_rois: int = 200,
-    cache_dir: str | Path = ".cache/enigma",
-) -> tuple[np.ndarray, np.ndarray]:
-    """Download an ENIGMA/HCP Schaefer structural adjacency matrix."""
 
+def _download(url, destination):
+    """Download one integration-test resource into its cache."""
+    if destination.exists():
+        return destination
+
+    request = Request(url, headers={"User-Agent": "braincontrol-tests"})
+    temporary = destination.with_suffix(destination.suffix + ".part")
+    with urlopen(request, timeout=60) as response:
+        with temporary.open("wb") as output:
+            copyfileobj(response, output)
+    temporary.replace(destination)
+    return destination
+
+
+def _fetch_schaefer_structural_connectome(n_rois, cache_dir):
+    """Fetch a pinned ENIGMA/HCP Schaefer structural connectome."""
     if n_rois not in {100, 200, 300, 400}:
         raise ValueError("n_rois must be 100, 200, 300, or 400")
 
-    cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
-
     matrix_name = f"strucMatrix_ctx_schaefer_{n_rois}.csv"
     labels_name = f"strucLabels_ctx_schaefer_{n_rois}.csv"
-
-    def download(filename: str) -> Path:
-        destination = cache_dir / filename
-
-        if not destination.exists():
-            request = Request(
-                f"{BASE_URL}/{filename}",
-                headers={"User-Agent": "Python structural-connectome downloader"},
-            )
-            temporary = destination.with_suffix(destination.suffix + ".part")
-
-            with urlopen(request, timeout=60) as response:
-                with temporary.open("wb") as output:
-                    copyfileobj(response, output)
-
-            temporary.replace(destination)
-
-        return destination
-
-    matrix_file = download(matrix_name)
-    labels_file = download(labels_name)
+    matrix_file = _download(
+        f"{ENIGMA_BASE_URL}/{matrix_name}", cache_dir / matrix_name
+    )
+    labels_file = _download(
+        f"{ENIGMA_BASE_URL}/{labels_name}", cache_dir / labels_name
+    )
 
     adjacency = np.loadtxt(matrix_file, delimiter=",", dtype=float)
-    labels = np.loadtxt(
-        labels_file,
-        delimiter=",",
-        dtype=str,
-        ndmin=1,
-    )
-
+    labels = np.loadtxt(labels_file, delimiter=",", dtype=str, ndmin=1)
     if adjacency.shape != (n_rois, n_rois):
         raise RuntimeError(f"Unexpected matrix shape: {adjacency.shape}")
-
     if labels.shape != (n_rois,):
         raise RuntimeError(f"Unexpected label shape: {labels.shape}")
-
     return adjacency, labels
 
-adjacency, matrix_labels = fetch_schaefer_structural_connectome(n_rois)
 
-###############################################################################
-# Sanity check that adjacency matrix and atlas are the same
-###############################################################################
+def _state_labels():
+    """Return hierarchical labels for the empirical contrast maps."""
+    frame = pd.DataFrame({"state": CONTRAST_NAMES})
+    frame[["hemisphere", "modality"]] = frame["state"].str.extract(
+        r"^(left|right).*?\((auditory|visual) cue\)$"
+    )
+    return pd.MultiIndex.from_frame(frame)
 
-atlas_labels = np.asarray([
-    label.decode() if hasattr(label, "decode") else str(label)
-    for label in atlas.labels
-])
 
-atlas_labels = np.asarray([
-    label
-    for label in atlas_labels
-    if label.strip().casefold() != "background"
-])
-
-if atlas_labels.shape != matrix_labels.shape:
-    raise RuntimeError(
-        f"Label counts differ: atlas={len(atlas_labels)}, "
-        f"matrix={len(matrix_labels)}"
+def _node_labels(atlas_lut):
+    """Return hierarchical labels for non-background atlas regions."""
+    frame = atlas_lut.copy()
+    frame[["hemisphere", "network"]] = frame["name"].str.extract(
+        r"^\d+Networks_(LH|RH)_(.+)_\d+$"
+    )
+    frame = frame.loc[frame["name"] != "Background"]
+    return pd.MultiIndex.from_frame(
+        frame.loc[:, ["name", "network", "hemisphere"]].reset_index(drop=True)
     )
 
-if not np.array_equal(atlas_labels, matrix_labels):
-    mismatch = np.flatnonzero(atlas_labels != matrix_labels)[0]
-    raise RuntimeError(
-        f"Label-order mismatch at node {mismatch}: "
-        f"atlas={atlas_labels[mismatch]!r}, "
-        f"matrix={matrix_labels[mismatch]!r}"
+
+@pytest.fixture(scope="module")
+def empirical_data(tmp_path_factory):
+    """Download and prepare all empirical integration-test inputs."""
+    cache_dir = tmp_path_factory.mktemp("braincontrol-neuroimaging")
+    localizer = fetch_localizer_contrasts(
+        n_subjects=1,
+        contrasts=CONTRAST_NAMES,
+        data_dir=cache_dir / "nilearn",
+    )
+    state_images = localizer["cmaps"]
+    atlas = fetch_atlas_schaefer_2018(
+        n_rois=N_ROIS,
+        yeo_networks=7,
+        resolution_mm=1,
+        data_dir=cache_dir / "nilearn",
+    )
+    adjacency, matrix_labels = _fetch_schaefer_structural_connectome(
+        N_ROIS, cache_dir / "enigma"
     )
 
-###############################################################################
-# Test braincontrol
-###############################################################################
+    atlas_labels = [
+        label.decode() if hasattr(label, "decode") else str(label)
+        for label in atlas.labels
+    ]
+    atlas_labels = np.asarray(
+        [
+            label
+            for label in atlas_labels
+            if label.strip().casefold() != "background"
+        ]
+    )
+    np.testing.assert_array_equal(atlas_labels, matrix_labels)
 
-adjacency_df = pd.DataFrame(data=adjacency,index=atlas_labels,columns=atlas_labels)
+    labels = _node_labels(atlas["lut"])
+    masker = NiftiLabelsMasker(
+        labels_img=atlas["maps"],
+        lut=atlas["lut"],
+        standardize=False,
+        reports=False,
+        keep_masked_labels=False,
+    )
+    return {
+        "adjacency": pd.DataFrame(
+            adjacency, index=matrix_labels, columns=matrix_labels
+        ),
+        "images": state_images,
+        "image_4d": load_img(state_images),
+        "masker": masker,
+        "node_labels": labels,
+        "state_labels": _state_labels(),
+    }
 
-# set masker
-masker = NiftiLabelsMasker(labels_img=atlas_img,lut=atlas_lut,standardize=False)
 
-###############################################################################
-# Test when input is X
-###############################################################################
+def _transitioner(empirical_data, **kwargs):
+    """Construct an integration-test transformer."""
+    parameters = {
+        "A": empirical_data["adjacency"],
+        "T": 0.002,
+        "masker": empirical_data["masker"],
+        "node_labels": empirical_data["node_labels"],
+        "state_labels": empirical_data["state_labels"],
+        "order": "permutations",
+        "store_trajectories": False,
+        "store_control_trajectories": False,
+    }
+    parameters.update(kwargs)
+    return Transitioner(**parameters)
 
-transitioner_X = Transitioner(A=adjacency_df,T=1,masker=masker,
-                              node_attributes=atlas_labels_multi,
-                              state_attributes=state_attributes_multi,
-                              order='permutations')
 
-transitions_X_1 = transitioner_X.fit_transform(X=state_imgs_list)
-transitions_X_2 = transitioner_X.fit_transform(X=state_imgs_4d)
+def _transition_label(source, target):
+    """Return one endpoint-paired hierarchical transition label."""
+    return (
+        ("source", "target"),
+        *zip(source, target),
+    )
 
 
+def test_empirical_image_and_dataframe_inputs_match(empirical_data):
+    """List, 4D-image, and pre-masked inputs should produce equal energies."""
+    from_list = _transitioner(empirical_data).fit_transform(
+        X=empirical_data["images"]
+    )
+    from_4d = _transitioner(empirical_data).fit_transform(
+        X=empirical_data["image_4d"]
+    )
+    masked = empirical_data["masker"].fit_transform(empirical_data["images"])
+    masked_df = pd.DataFrame(
+        masked,
+        index=empirical_data["state_labels"],
+        columns=empirical_data["node_labels"],
+    )
+    from_dataframe = Transitioner(
+        A=empirical_data["adjacency"],
+        T=0.002,
+        order="permutations",
+        store_trajectories=False,
+        store_control_trajectories=False,
+    ).fit_transform(X=masked_df)
 
-transitioner_X = Transitioner(A=adjacency_df,T=1,masker=masker,
-                              node_attributes=None,
-                              state_attributes=None,
-                              order='permutations')
+    pd.testing.assert_frame_equal(from_list, from_4d)
+    pd.testing.assert_frame_equal(from_list, from_dataframe)
 
-X_df = pd.DataFrame(data=masker.fit_transform(state_imgs_list),
-                    columns=atlas_labels_multi,
-                    index=state_attributes_multi
-                    )
 
-transitions_X_3 = transitioner_X.fit_transform(X=X_df)
+def test_empirical_endpoint_inputs_honor_order(empirical_data):
+    """Product order should compute both directions and both self transitions."""
+    labels = empirical_data["state_labels"][:2]
+    transitioner = _transitioner(
+        empirical_data,
+        order="product",
+        state_labels=labels,
+    )
 
-###############################################################################
-# Test when input is x0 + xf
-###############################################################################
+    result = transitioner.fit_transform(
+        x0=empirical_data["images"][0],
+        xf=empirical_data["images"][1],
+    )
 
-state_attributes_x0xf_multi = state_attributes_multi[:2]
-
-transitioner_x0xf = Transitioner(A=adjacency_df,T=1,masker=masker,
-                              node_attributes=atlas_labels_multi,
-                              state_attributes=state_attributes_x0xf_multi,
-                              order='stability')
-
-# FIXME: This has to be fixed, we want that the function still honors the order argument.
-transitions_1 = transitioner_x0xf.fit_transform(x0=state_imgs_list[0],xf=state_imgs_list[1])
-
-# # mask to get x0 and xf as arrays
-x0_array = masker.fit_transform(state_imgs_list[0])
-xf_array = masker.fit_transform(state_imgs_list[1])
-transitions_4 = transitioner_x0xf.fit_transform(x0=x0_array,xf=xf_array)
+    assert transitioner.transition_indices_ == [
+        (0, 0),
+        (0, 1),
+        (1, 0),
+        (1, 1),
+    ]
+    expected_index = pd.MultiIndex.from_tuples(
+        [
+            _transition_label(labels[0], labels[0]),
+            _transition_label(labels[0], labels[1]),
+            _transition_label(labels[1], labels[0]),
+            _transition_label(labels[1], labels[1]),
+        ],
+        names=result.index.names,
+    )
+    pd.testing.assert_index_equal(result.index, expected_index)

@@ -53,10 +53,17 @@ def _validate_choice(value, name, choices):
         )
     return value
 
+
+def _validate_boolean(value, name):
+    """Validate and return a boolean option."""
+    if not isinstance(value, (bool, np.bool_)):
+        raise TypeError(f"{name} must be a boolean")
+    return bool(value)
+
+
 def _validate_normalization_inputs(normalize_A, c):
     """Validate adjacency-normalization parameters."""
-    if not isinstance(normalize_A, (bool, np.bool_)):
-        raise TypeError("normalize_A must be a boolean")
+    normalize_A = _validate_boolean(normalize_A, "normalize_A")
     if (
         isinstance(c, (bool, np.bool_))
         or not isinstance(c, (int, float, np.integer, np.floating))
@@ -64,10 +71,11 @@ def _validate_normalization_inputs(normalize_A, c):
         or c <= 0
     ):
         raise ValueError("c must be a positive finite number")
-    return bool(normalize_A), float(c)
+    return normalize_A, float(c)
 
 def _resolve_state_input(X=None, x0=None, xf=None):
-    """Validate and return one of the supported state-input forms."""
+    """Validate and return one of the supported state-input forms. Returns
+    either X or [x0,xf]"""
     endpoints_provided = x0 is not None or xf is not None
     if X is not None and endpoints_provided:
         raise ValueError("Provide either X or x0 and xf, not both")
@@ -199,7 +207,8 @@ def _set_transition_order(n_states, order):
     ]
     return len(transition_indices), transition_indices
 
-# TODO: Rename control_inputs to control_trajectories througout this script.
+# FIXME: trajectories should be always named state_trajectories. That means we
+# have state_trajectories and control_trajectories.
 def state_to_state_transition(
     A,
     T,
@@ -214,7 +223,7 @@ def state_to_state_transition(
     xr="zero",
     expm_version="scipy",
 ):
-    """Compute trajectories and control inputs from prevalidated inputs.
+    """Compute state and control trajectories from prevalidated inputs.
 
     Parameters
     ----------
@@ -247,7 +256,8 @@ def state_to_state_transition(
     Returns
     -------
     trajectories : ndarray of shape (n_time_points, n_nodes, n_transitions)
-    control_inputs : ndarray of shape (n_control_points, n_nodes, n_transitions)
+    control_trajectories : ndarray of shape \
+            (n_control_points, n_nodes, n_transitions)
     errors : ndarray of shape (n_transitions, 2)
         Numerical errors reported by ``nctpy`` for each transition.
     """
@@ -261,10 +271,10 @@ def state_to_state_transition(
         solver_S = S
 
     trajectories = []
-    control_inputs = []
+    control_trajectories = []
     errors = []
     for _, source, target in transition_indices:
-        trajectory, control_input, error = get_control_inputs(
+        trajectory, control_trajectory, error = get_control_inputs(
             A_norm=A,
             T=T,
             B=B,
@@ -277,12 +287,12 @@ def state_to_state_transition(
             expm_version=expm_version,
         )
         trajectories.append(trajectory)
-        control_inputs.append(control_input)
+        control_trajectories.append(control_trajectory)
         errors.append(error)
 
     if n_transitions:
         trajectory_array = np.stack(trajectories, axis=2)
-        control_input_array = np.stack(control_inputs, axis=2)
+        control_trajectory_array = np.stack(control_trajectories, axis=2)
         error_array = np.asarray(errors, dtype=float)
     else:
         if system == "continuous":
@@ -292,50 +302,56 @@ def state_to_state_transition(
             n_trajectory_points = int(T) + 1
             n_control_points = int(T)
         trajectory_array = np.empty((n_trajectory_points, A.shape[0], 0))
-        control_input_array = np.empty((n_control_points, A.shape[0], 0))
+        control_trajectory_array = np.empty(
+            (n_control_points, A.shape[0], 0)
+        )
         error_array = np.empty((0, 2))
 
-    return trajectory_array, control_input_array, error_array
+    return trajectory_array, control_trajectory_array, error_array
 
-def state_to_state_integration(control_inputs):
-    """Integrate squared control inputs over time for every transition."""
-    control_inputs = np.asarray(control_inputs, dtype=float)
-    if control_inputs.ndim != 3:
+def state_to_state_integration(control_trajectories):
+    """Integrate squared control trajectories for every transition."""
+    control_trajectories = np.asarray(control_trajectories, dtype=float)
+    if control_trajectories.ndim != 3:
         raise ValueError(
-            "control_inputs must have shape "
+            "control_trajectories must have shape "
             "(n_time_points, n_nodes, n_transitions)"
         )
-    if not np.all(np.isfinite(control_inputs)):
-        raise ValueError("control_inputs must contain only finite values")
+    if not np.all(np.isfinite(control_trajectories)):
+        raise ValueError(
+            "control_trajectories must contain only finite values"
+        )
 
-    n_nodes, n_transitions = control_inputs.shape[1:]
+    n_nodes, n_transitions = control_trajectories.shape[1:]
     energies = np.empty((n_transitions, n_nodes))
     for transition in range(n_transitions):
-        energies[transition] = integrate_u(control_inputs[:, :, transition])
+        energies[transition] = integrate_u(
+            control_trajectories[:, :, transition]
+        )
     return energies
 
-def get_transition_info(state_attributes, order):
-    """Pair state attributes in the same order as the requested transitions."""
-    attributes = list(state_attributes)
-    _, transition_indices = _set_transition_order(len(attributes), order)
+def get_transition_info(state_labels, order):
+    """Pair state labels in the same order as the requested transitions."""
+    labels = list(state_labels)
+    _, transition_indices = _set_transition_order(len(labels), order)
     return [
-        (attributes[source], attributes[target])
+        (labels[source], labels[target])
         for _, source, target in transition_indices
     ]
 
 
-def _coerce_attributes(attributes, expected_length, parameter_name):
-    """Return list-like attributes as a pandas Index or MultiIndex."""
-    if isinstance(attributes, (str, bytes, Mapping, pd.DataFrame)):
+def _coerce_labels(labels, expected_length, parameter_name):
+    """Return list-like labels as a pandas Index or MultiIndex."""
+    if isinstance(labels, (str, bytes, Mapping, pd.DataFrame)):
         raise TypeError(
             f"{parameter_name} must be a list-like or MultiIndex-like object"
         )
 
-    if isinstance(attributes, pd.MultiIndex):
-        index = attributes.copy()
+    if isinstance(labels, pd.MultiIndex):
+        index = labels.copy()
     else:
         try:
-            values = list(attributes)
+            values = list(labels)
         except TypeError as error:
             raise TypeError(
                 f"{parameter_name} must be a list-like or MultiIndex-like object"
@@ -350,10 +366,10 @@ def _coerce_attributes(attributes, expected_length, parameter_name):
                 raise ValueError(
                     f"MultiIndex-like {parameter_name} must use tuples of equal length"
                 )
-            names = getattr(attributes, "names", None)
+            names = getattr(labels, "names", None)
             index = pd.MultiIndex.from_tuples(values, names=names)
         else:
-            name = getattr(attributes, "name", None)
+            name = getattr(labels, "name", None)
             index = pd.Index(values, name=name)
 
     if expected_length is not None and len(index) != expected_length:
@@ -366,20 +382,20 @@ def _coerce_attributes(attributes, expected_length, parameter_name):
     return index
 
 
-def _attribute_level_names(attributes, default_name, attribute_prefix=None):
-    """Return unique, non-conflicting names for attribute levels."""
-    if isinstance(attributes, pd.MultiIndex):
-        source_names = attributes.names
+def _label_level_names(labels, default_name, label_prefix=None):
+    """Return unique, non-conflicting names for label levels."""
+    if isinstance(labels, pd.MultiIndex):
+        source_names = labels.names
     else:
-        source_names = [attributes.name]
+        source_names = [labels.name]
 
     names = []
-    attribute_prefix = attribute_prefix or default_name
+    label_prefix = label_prefix or default_name
     for level, source_name in enumerate(source_names):
         fallback = (
             default_name
             if len(source_names) == 1
-            else f"{attribute_prefix}_attribute_{level}"
+            else f"{label_prefix}_label_{level}"
         )
         name = source_name
         if not isinstance(name, str) or not name or name in names:
@@ -387,37 +403,25 @@ def _attribute_level_names(attributes, default_name, attribute_prefix=None):
         names.append(name)
     return names
 
-# FIXME: Represent transition endpoints using a row MultiIndex instead of
-# tuple-valued row-index level names. The outer level should be named
-# "endpoint" and contain "source" and "target"; the inner level(s) should
-# preserve the state attribute names. Use the same structure for flat and
-# MultiIndex state attributes while keeping one row per transition.
-def _state_transition_index(state_attributes, order, n_transitions):
-    """Build a transition index while preserving state-level hierarchy.
-
-    For hierarchical state attributes, ``source`` and ``target`` are the
-    outer components of each index-level name and the original state level
-    name remains the inner component.
-    """
-    state_attributes = _coerce_attributes(
-        state_attributes, None, "state_attributes"
-    )
+def _state_transition_index(state_labels, order, n_transitions):
+    """Build an endpoint-aware row index from state labels."""
+    state_labels = _coerce_labels(state_labels, None, "state_labels")
     expected_transitions, transition_indices = _set_transition_order(
-        len(state_attributes), order
+        len(state_labels), order
     )
     if expected_transitions != n_transitions:
         raise ValueError(
-            "state_to_state_array rows do not match state_attributes and order"
+            "state_to_state_array rows do not match state_labels and order"
         )
 
-    level_names = _attribute_level_names(state_attributes, "state")
-    if isinstance(state_attributes, pd.MultiIndex):
+    level_names = _label_level_names(state_labels, "state")
+    if isinstance(state_labels, pd.MultiIndex):
         level_values = [
-            state_attributes.get_level_values(level).to_numpy()
-            for level in range(state_attributes.nlevels)
+            state_labels.get_level_values(level).to_numpy()
+            for level in range(state_labels.nlevels)
         ]
     else:
-        level_values = [state_attributes.to_numpy()]
+        level_values = [state_labels.to_numpy()]
 
     source_arrays = [
         [values[source] for _, source, _ in transition_indices]
@@ -428,35 +432,21 @@ def _state_transition_index(state_attributes, order, n_transitions):
         for values in level_values
     ]
 
-    # FIXME: See above: Remove this logic. Instead, transition information
-    # should be represented by introducing a new multiindex level "endpoint"
-    transition_names = [
-        f"{source}-{target}"
-        for source, target in zip(source_arrays[-1], target_arrays[-1])
+    endpoint_values = [("source", "target")] * n_transitions
+    paired_label_values = [
+        list(zip(source_values, target_values))
+        for source_values, target_values in zip(source_arrays, target_arrays)
     ]
-
-    if isinstance(state_attributes, pd.MultiIndex):
-        names = [
-            *(("source", level_name) for level_name in level_names),
-            *(("target", level_name) for level_name in level_names),
-            ("transition", "name"),
-        ]
-    else:
-        names = [
-            f"source_{level_names[0]}",
-            f"target_{level_names[0]}",
-            "transition_name",
-        ]
-
     return pd.MultiIndex.from_arrays(
-        [*source_arrays, *target_arrays, transition_names], names=names
+        [endpoint_values, *paired_label_values],
+        names=["endpoint", *level_names],
     )
 
 def get_state_to_state_df(
     state_to_state_array,
     order,
-    node_attributes=None,
-    state_attributes=None,
+    node_labels=None,
+    state_labels=None,
 ):
     """Create a labelled DataFrame from a transition-by-node array.
 
@@ -466,19 +456,17 @@ def get_state_to_state_df(
         Values produced for every transition and node.
     order : {"combinations", "permutations", "product", "stability"}
         Ordering used to construct the transitions.
-    node_attributes : list-like or MultiIndex-like, optional
+    node_labels : list-like or MultiIndex-like, optional
         One label or tuple of hierarchical labels per node. A pandas
         ``MultiIndex`` is preserved directly. A list-like object containing
         equal-length tuples is converted to a ``MultiIndex``. Other list-like
         values become a regular ``Index``. This is the only parameter for node
         metadata.
-    state_attributes : list-like or MultiIndex-like, optional
-        One label or tuple of hierarchical labels per state. A pandas
-        ``MultiIndex`` is preserved through hierarchical ``("source",
-        <level>)`` and ``("target", <level>)`` row-index names. Tuple-based
-        list-like values are converted to a ``MultiIndex``. Flat values
-        produce the traditional ``source_state`` and ``target_state`` fields.
-        This is the only parameter for state metadata.
+    state_labels : list-like or MultiIndex-like, optional
+        One label or tuple of hierarchical labels per state. The output row
+        index has an outer ``endpoint`` level containing the ordered pair
+        ``("source", "target")``. Each original state-label level stores its
+        corresponding ``(source_value, target_value)`` pair.
     Returns
     -------
     pandas.DataFrame
@@ -486,19 +474,17 @@ def get_state_to_state_df(
     """
     values = _as_2d_float_array(state_to_state_array, "state_to_state_array")
     n_transitions, n_nodes = values.shape
-    if node_attributes is None:
-        node_attributes = pd.RangeIndex(n_nodes)
+    if node_labels is None:
+        node_labels = pd.RangeIndex(n_nodes)
     else:
-        node_attributes = _coerce_attributes(
-            node_attributes, n_nodes, "node_attributes"
-        )
+        node_labels = _coerce_labels(node_labels, n_nodes, "node_labels")
 
     transition_index = None
-    if state_attributes is not None:
+    if state_labels is not None:
         transition_index = _state_transition_index(
-            state_attributes, order, n_transitions
+            state_labels, order, n_transitions
         )
-    return pd.DataFrame(values, index=transition_index, columns=node_attributes)
+    return pd.DataFrame(values, index=transition_index, columns=node_labels)
 
 def get_transition_df(
     A,
@@ -526,7 +512,7 @@ def get_transition_df(
         order,
         system,
     )
-    _, control_inputs, _ = state_to_state_transition(
+    _, control_trajectories, _ = state_to_state_transition(
         A=A,
         T=T,
         B=B,
@@ -539,7 +525,7 @@ def get_transition_df(
         xr=xr,
         expm_version=expm_version,
     )
-    energies = state_to_state_integration(control_inputs)
+    energies = state_to_state_integration(control_trajectories)
     return get_state_to_state_df(energies, order=order, **kwargs)
 
 class Transitioner(
@@ -552,13 +538,13 @@ class Transitioner(
     masker such as ``NiftiLabelsMasker(labels_img=atlas)`` to the constructor;
     each volume in a 4D image is then treated as one state.
 
-    The fitted transformer exposes unintegrated results through
+    The fitted transformer exposes retained unintegrated results through
     :meth:`get_transition_arrays` and numerical errors through
     :meth:`get_errors`.
 
     State input can be provided either as ``X``, containing one state per row,
-    or as the separate ``x0`` and ``xf`` keyword arguments. The latter always
-    computes the single directed transition from ``x0`` to ``xf``.
+    or as the separate ``x0`` and ``xf`` keyword arguments. In either form,
+    ``order`` controls which directed and self transitions are computed.
 
     Parameters
     ----------
@@ -603,15 +589,20 @@ class Transitioner(
         Cache state-transition computations when this value is at least 1.
     verbose : int, default=0
         Verbosity forwarded to Nilearn's caching infrastructure.
-    node_attributes : list-like or MultiIndex-like, optional
+    node_labels : list-like or MultiIndex-like, optional
         Labels for nodes. When supplied, :meth:`transform` returns a DataFrame
-        whose columns preserve these labels.
-    state_attributes : list-like or MultiIndex-like, optional
+        whose columns preserve these labels. If omitted for DataFrame input,
+        labels are inferred from its columns.
+    state_labels : list-like or MultiIndex-like, optional
         Labels for states. When supplied, :meth:`transform` returns a DataFrame
-        whose row index identifies each source-target transition.
+        whose row index identifies each transition endpoint. If omitted for
+        DataFrame input, labels are inferred from its index.
+    store_trajectories : bool, default=True
+        Whether to retain state trajectories from the latest transform call.
+    store_control_trajectories : bool, default=True
+        Whether to retain control trajectories from the latest transform call.
     """
 
-    # FIXME: Rewrite node_attributes as node_labels and state_attributes as state_labels
     def __init__(
         self,
         A,
@@ -630,8 +621,10 @@ class Transitioner(
         verbose=0,
         normalize_A=True,
         c=1,
-        node_attributes=None,
-        state_attributes=None,
+        node_labels=None,
+        state_labels=None,
+        store_trajectories=True,
+        store_control_trajectories=True,
     ):
         self.A = A
         self.T = T
@@ -649,8 +642,10 @@ class Transitioner(
         self.verbose = verbose
         self.normalize_A = normalize_A
         self.c = c
-        self.node_attributes = node_attributes
-        self.state_attributes = state_attributes
+        self.node_labels = node_labels
+        self.state_labels = state_labels
+        self.store_trajectories = store_trajectories
+        self.store_control_trajectories = store_control_trajectories
 
     @staticmethod
     def _is_state_matrix(X):
@@ -710,82 +705,109 @@ class Transitioner(
         self.rho_ = rho
         self.n_features_in_ = states.shape[1]
         self.n_states_in_ = states.shape[0]
-        self.node_attributes_ = (
-            None
-            if self.node_attributes is None
-            else _coerce_attributes(
-                self.node_attributes, states.shape[1], "node_attributes"
-            )
+        self.store_trajectories_ = _validate_boolean(
+            self.store_trajectories, "store_trajectories"
         )
-        self.state_attributes_ = (
+        self.store_control_trajectories_ = _validate_boolean(
+            self.store_control_trajectories,
+            "store_control_trajectories",
+        )
+        dataframe_node_labels = (
+            state_input.columns if isinstance(state_input, pd.DataFrame) else None
+        )
+        dataframe_state_labels = (
+            state_input.index if isinstance(state_input, pd.DataFrame) else None
+        )
+        node_labels = (
+            self.node_labels
+            if self.node_labels is not None
+            else dataframe_node_labels
+        )
+        state_labels = (
+            self.state_labels
+            if self.state_labels is not None
+            else dataframe_state_labels
+        )
+        self.node_labels_ = (
             None
-            if self.state_attributes is None
-            else _coerce_attributes(
-                self.state_attributes, states.shape[0], "state_attributes"
-            )
+            if node_labels is None
+            else _coerce_labels(node_labels, states.shape[1], "node_labels")
+        )
+        self.state_labels_ = (
+            None
+            if state_labels is None
+            else _coerce_labels(state_labels, states.shape[0], "state_labels")
         )
         return self
 
     def transform(self, X=None, *, x0=None, xf=None):
         """Return integrated control energy with shape transitions by nodes."""
         check_is_fitted(self, attributes=["A_", "B_", "S_", "masker_"])
-        explicit_pair = X is None
         state_input = _resolve_state_input(X=X, x0=x0, xf=xf)
         states = self._transform_states(state_input)
         if states.shape[1] != self.n_features_in_:
             raise ValueError(
                 f"X has {states.shape[1]} nodes, but fit saw {self.n_features_in_}"
             )
-        if (
-            self.state_attributes_ is not None
-            and len(self.state_attributes_) != states.shape[0]
-        ):
+        output_node_labels = self.node_labels_
+        output_state_labels = self.state_labels_
+        if isinstance(state_input, pd.DataFrame):
+            if self.node_labels is None:
+                output_node_labels = _coerce_labels(
+                    state_input.columns, states.shape[1], "node_labels"
+                )
+            if self.state_labels is None:
+                output_state_labels = _coerce_labels(
+                    state_input.index, states.shape[0], "state_labels"
+                )
+        if output_state_labels is not None and len(
+            output_state_labels
+        ) != states.shape[0]:
             raise ValueError(
-                "state_attributes must contain one value per transformed state; "
-                f"got {len(self.state_attributes_)} values for "
+                "state_labels must contain one value per transformed state; "
+                f"got {len(output_state_labels)} values for "
                 f"{states.shape[0]} states"
             )
 
-        # FIXME: This has to be fixed, we want that user 
-        # can provide x0 and xf and we still want all the possible options how
-        # transition can be computed
-        transition_order = "combinations" if explicit_pair else self.order
+        transition_order = self.order
         cached_transition = self._cache(
             state_to_state_transition, func_memory_level=1
         )
-        
-        # TODO: Introduce new boolean arguments store_trajectories
-        # and store_control_trajectories
-        # in init method that allows user to disable the storing 
-        # of the trajectories and control inputs as these can get 
-        # quite large
-        self.trajectories_, self.control_inputs_, self.errors_ = (
-            cached_transition(
-                A=self.A_,
-                T=self.T_,
-                B=self.B_,
-                X=states,
-                rho=self.rho_,
-                S=self.S_,
-                energy_type=self.energy_type,
-                order=transition_order,
-                system=self.system,
-                xr=self.xr,
-                expm_version=self.expm_version,
-            )
+
+        trajectories, control_trajectories, self.errors_ = cached_transition(
+            A=self.A_,
+            T=self.T_,
+            B=self.B_,
+            X=states,
+            rho=self.rho_,
+            S=self.S_,
+            energy_type=self.energy_type,
+            order=transition_order,
+            system=self.system,
+            xr=self.xr,
+            expm_version=self.expm_version,
         )
+        if self.store_trajectories_:
+            self.trajectories_ = trajectories
+        else:
+            self.__dict__.pop("trajectories_", None)
+        if self.store_control_trajectories_:
+            self.control_trajectories_ = control_trajectories
+        else:
+            self.__dict__.pop("control_trajectories_", None)
         _, indices = _set_transition_order(states.shape[0], transition_order)
         self.transition_indices_ = [
             (source, target) for _, source, target in indices
         ]
-        self.energies_ = state_to_state_integration(self.control_inputs_)
-        if self.node_attributes_ is None and self.state_attributes_ is None:
+        self.energies_ = state_to_state_integration(control_trajectories)
+        if output_node_labels is None and output_state_labels is None:
+            self.__dict__.pop("energies_df_", None)
             return self.energies_
         self.energies_df_ = get_state_to_state_df(
             self.energies_,
             order=transition_order,
-            node_attributes=self.node_attributes_,
-            state_attributes=self.state_attributes_,
+            node_labels=output_node_labels,
+            state_labels=output_state_labels,
         )
         return self.energies_df_
 
@@ -801,19 +823,28 @@ class Transitioner(
         return self.errors_.copy()
 
     def get_transition_arrays(self):
-        """Return trajectory and control-input arrays from the latest transform."""
-        check_is_fitted(self, attributes=["trajectories_", "control_inputs_"])
-        return self.trajectories_.copy(), self.control_inputs_.copy()
+        """Return retained trajectory arrays, or ``None`` when disabled."""
+        check_is_fitted(self, attributes=["errors_"])
+        trajectories = getattr(self, "trajectories_", None)
+        control_trajectories = getattr(self, "control_trajectories_", None)
+        return (
+            None if trajectories is None else trajectories.copy(),
+            (
+                None
+                if control_trajectories is None
+                else control_trajectories.copy()
+            ),
+        )
 
     def get_feature_names_out(self, input_features=None):
         """Return names for the node-level energy columns."""
         check_is_fitted(self, attributes=["n_features_in_"])
         if input_features is not None:
-            names = _coerce_attributes(
+            names = _coerce_labels(
                 input_features, self.n_features_in_, "input_features"
             )
-        elif self.node_attributes_ is not None:
-            names = self.node_attributes_
+        elif self.node_labels_ is not None:
+            names = self.node_labels_
         else:
             names = [
                 f"node_{index}" for index in range(self.n_features_in_)
