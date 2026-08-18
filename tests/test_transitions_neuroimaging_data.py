@@ -212,11 +212,7 @@ transitioner_x0xf = Transitioner(A=adjacency_df,T=1,masker=masker,
                               state_attributes=state_attributes_x0xf_multi,
                               order='stability')
 
-# FIXME: This has to be fixed, we want that user can compute
-# x0 -> xf
-# xf -> x0
-# x0 -> x0
-# xf -> xf
+# FIXME: This has to be fixed, we want that the function still honors the order argument.
 transitions_1 = transitioner_x0xf.fit_transform(x0=state_imgs_list[0],xf=state_imgs_list[1])
 
 # # mask to get x0 and xf as arrays

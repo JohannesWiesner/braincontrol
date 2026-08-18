@@ -199,6 +199,7 @@ def _set_transition_order(n_states, order):
     ]
     return len(transition_indices), transition_indices
 
+# TODO: Rename control_inputs to control_trajectories througout this script.
 def state_to_state_transition(
     A,
     T,
@@ -386,8 +387,8 @@ def _attribute_level_names(attributes, default_name, attribute_prefix=None):
         names.append(name)
     return names
 
-# FIXME: Represent transition endpoints using a column MultiIndex instead of
-# tuple-valued row-index level names. The outer column level should be named
+# FIXME: Represent transition endpoints using a row MultiIndex instead of
+# tuple-valued row-index level names. The outer level should be named
 # "endpoint" and contain "source" and "target"; the inner level(s) should
 # preserve the state attribute names. Use the same structure for flat and
 # MultiIndex state attributes while keeping one row per transition.
@@ -426,6 +427,9 @@ def _state_transition_index(state_attributes, order, n_transitions):
         [values[target] for _, _, target in transition_indices]
         for values in level_values
     ]
+
+    # FIXME: See above: Remove this logic. Instead, transition information
+    # should be represented by introducing a new multiindex level "endpoint"
     transition_names = [
         f"{source}-{target}"
         for source, target in zip(source_arrays[-1], target_arrays[-1])
@@ -751,7 +755,7 @@ class Transitioner(
         )
         
         # TODO: Introduce new boolean arguments store_trajectories
-        # and store_control_inputs
+        # and store_control_trajectories
         # in init method that allows user to disable the storing 
         # of the trajectories and control inputs as these can get 
         # quite large
