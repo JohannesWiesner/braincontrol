@@ -849,10 +849,13 @@ class Transitioner(
         check_is_fitted(self, attributes=["errors_"])
         trajectories = getattr(self, "trajectories_", None)
         control_trajectories = getattr(self, "control_trajectories_", None)
-        return 
-        (
+        return (
             None if trajectories is None else trajectories.copy(),
-            None if control_trajectories is None else control_trajectories.copy(),
+            (
+                None
+                if control_trajectories is None
+                else control_trajectories.copy()
+            ),
         )
 
     def get_feature_names_out(self, input_features=None):
