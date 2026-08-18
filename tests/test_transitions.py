@@ -22,6 +22,7 @@ from braincontrol.transitions import (
     state_to_state_transition,
 )
 
+# TODO: Add little docstrings to each test function so we know what it is testing
 
 @pytest.fixture
 def transition_data():

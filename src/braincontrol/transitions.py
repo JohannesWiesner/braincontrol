@@ -22,7 +22,7 @@ from sklearn.utils.validation import check_is_fitted
 ########################################################################################
 
 def _as_2d_float_array(value, name):
-    """Return a finite, two-dimensional floating-point array."""
+    """Check that input is (or can be converted into) a finite, two-dimensional floating-point array."""
     array = np.asarray(value, dtype=float)
     if array.ndim != 2:
         raise ValueError(f"{name} must be a two-dimensional array")
@@ -53,13 +53,11 @@ def _validate_choice(value, name, choices):
         )
     return value
 
-
 def _validate_boolean(value, name):
     """Validate and return a boolean option."""
     if not isinstance(value, (bool, np.bool_)):
         raise TypeError(f"{name} must be a boolean")
     return bool(value)
-
 
 def _validate_normalization_inputs(normalize_A, c):
     """Validate adjacency-normalization parameters."""
@@ -207,7 +205,9 @@ def _set_transition_order(n_states, order):
     ]
     return len(transition_indices), transition_indices
 
-# FIXME: trajectories should be always named state_trajectories. That means we
+
+# FIXME: Should be renamed to state_to_state_trajectories
+# FIXME: trajectories should be always named state_trajectories (throughout the whole script). That means we
 # have state_trajectories and control_trajectories.
 def state_to_state_transition(
     A,
@@ -289,11 +289,15 @@ def state_to_state_transition(
         trajectories.append(trajectory)
         control_trajectories.append(control_trajectory)
         errors.append(error)
-
+        
+    # TODO: I don't get this part. Why would n_transitions ever be None?
+    # NOTE: The absolute minium that we can do is to provide on state
+    # and to compute stability.
     if n_transitions:
         trajectory_array = np.stack(trajectories, axis=2)
         control_trajectory_array = np.stack(control_trajectories, axis=2)
         error_array = np.asarray(errors, dtype=float)
+    # TODO: I also don't get this part.
     else:
         if system == "continuous":
             n_trajectory_points = round(T / 0.001) + 1
@@ -330,6 +334,7 @@ def state_to_state_integration(control_trajectories):
         )
     return energies
 
+# FIXME: This is never used? So we can delete it?
 def get_transition_info(state_labels, order):
     """Pair state labels in the same order as the requested transitions."""
     labels = list(state_labels)
@@ -338,7 +343,6 @@ def get_transition_info(state_labels, order):
         (labels[source], labels[target])
         for _, source, target in transition_indices
     ]
-
 
 def _coerce_labels(labels, expected_length, parameter_name):
     """Return list-like labels as a pandas Index or MultiIndex."""
@@ -381,7 +385,7 @@ def _coerce_labels(labels, expected_length, parameter_name):
         raise ValueError(f"{parameter_name} must contain at least one value")
     return index
 
-
+# TODO: I still don't get what this is doing.
 def _label_level_names(labels, default_name, label_prefix=None):
     """Return unique, non-conflicting names for label levels."""
     if isinstance(labels, pd.MultiIndex):
@@ -486,6 +490,8 @@ def get_state_to_state_df(
         )
     return pd.DataFrame(values, index=transition_index, columns=node_labels)
 
+# FIXME: This is never used. Instead, in Transitioner, the .transform() method does
+# exactly this.
 def get_transition_df(
     A,
     T,
@@ -646,7 +652,11 @@ class Transitioner(
         self.state_labels = state_labels
         self.store_trajectories = store_trajectories
         self.store_control_trajectories = store_control_trajectories
-
+        
+    # FIXME: Add docs here what this function is doing.
+    # FIXME: We don't have to work with try-except? The input is either
+    # X, or [x0,xf], or 4D-iimg or [3DImg,3dimg] so we can use is-Niimg-like?
+    # https://nilearn.github.io/dev/modules/generated/nilearn.image.check_niimg.html#nilearn.image.check_niimg
     @staticmethod
     def _is_state_matrix(X):
         try:
@@ -654,7 +664,9 @@ class Transitioner(
         except Exception:
             return False
         return array.ndim == 2 and np.issubdtype(array.dtype, np.number)
-
+    
+    # FIXME: Don't use nested functions here. Delete the function above and put
+    # the logic here.
     @staticmethod
     def _resolve_state_input(X=None, x0=None, xf=None):
         """Delegate state-input validation to the shared validation helper."""
@@ -683,7 +695,7 @@ class Transitioner(
         """Fit the optional image masker and validate the transition inputs."""
         self._fit_cache()
         state_input = _resolve_state_input(X=X, x0=x0, xf=xf)
-        states = self._fit_states(state_input)
+        states = self._fit_states(state_input) # FIXME: Why not safe states as self.states_?
         A, T, B, _, rho, S, c = _validate_transition_inputs(
             self.A,
             self.T,
@@ -742,6 +754,12 @@ class Transitioner(
 
     def transform(self, X=None, *, x0=None, xf=None):
         """Return integrated control energy with shape transitions by nodes."""
+        
+        # FIXME: See above. Why not assign self.states_ in .fit()? Then we don't have
+        # to check again if the state input is valid, and we would not have to again
+        # call:
+        #    state_input = _resolve_state_input(X=X, x0=x0, xf=xf)
+        #    states = self._fit_states(state_input) 
         check_is_fitted(self, attributes=["A_", "B_", "S_", "masker_"])
         state_input = _resolve_state_input(X=X, x0=x0, xf=xf)
         states = self._transform_states(state_input)
@@ -811,6 +829,8 @@ class Transitioner(
         )
         return self.energies_df_
 
+    # TODO: Do we really need to define this? Because this should automatically be
+    # available by inheriting from TransformerMixin
     def fit_transform(self, X=None, y=None, *, x0=None, xf=None):
         """Fit and transform states supplied as ``X`` or as ``x0`` and ``xf``."""
         return self.fit(X, y, x0=x0, xf=xf).transform(
@@ -822,18 +842,17 @@ class Transitioner(
         check_is_fitted(self, attributes=["errors_"])
         return self.errors_.copy()
 
+    # TODO: Should be split up into .get_state_trajectories and .get_control_trajectories
+    # TODO: Should also output pandas dataframes with shape (time,nodes,transition)
     def get_transition_arrays(self):
         """Return retained trajectory arrays, or ``None`` when disabled."""
         check_is_fitted(self, attributes=["errors_"])
         trajectories = getattr(self, "trajectories_", None)
         control_trajectories = getattr(self, "control_trajectories_", None)
-        return (
+        return 
+        (
             None if trajectories is None else trajectories.copy(),
-            (
-                None
-                if control_trajectories is None
-                else control_trajectories.copy()
-            ),
+            None if control_trajectories is None else control_trajectories.copy(),
         )
 
     def get_feature_names_out(self, input_features=None):
