@@ -218,8 +218,6 @@ def _set_transition_order(n_states, order):
 
 
 # FIXME: Should be renamed to state_to_state_trajectories
-# FIXME: trajectories should be always named state_trajectories (throughout the whole script). That means we
-# have state_trajectories and control_trajectories.
 def state_to_state_transition(
     A,
     T,
@@ -266,9 +264,8 @@ def state_to_state_transition(
 
     Returns
     -------
-    trajectories : ndarray of shape (n_time_points, n_nodes, n_transitions)
-    control_trajectories : ndarray of shape \
-            (n_control_points, n_nodes, n_transitions)
+    state_trajectories : ndarray of shape (n_time_points, n_nodes, n_transitions)
+    control_trajectories : ndarray of shape (n_time_points, n_nodes, n_transitions)
     errors : ndarray of shape (n_transitions, 2)
         Numerical errors reported by ``nctpy`` for each transition.
     """
@@ -281,11 +278,11 @@ def state_to_state_transition(
         solver_rho = rho
         solver_S = S
 
-    trajectories = []
+    state_trajectories = []
     control_trajectories = []
     errors = []
     for _, source, target in transition_indices:
-        trajectory, control_trajectory, error = get_control_inputs(
+        state_trajectory, control_trajectory, error = get_control_inputs(
             A_norm=A,
             T=T,
             B=B,
@@ -297,7 +294,7 @@ def state_to_state_transition(
             xr=xr,
             expm_version=expm_version,
         )
-        trajectories.append(trajectory)
+        state_trajectories.append(state_trajectory)
         control_trajectories.append(control_trajectory)
         errors.append(error)
         
@@ -305,7 +302,7 @@ def state_to_state_transition(
     # NOTE: The absolute minium that we can do is to provide on state
     # and to compute stability.
     if n_transitions:
-        trajectory_array = np.stack(trajectories, axis=2)
+        trajectory_array = np.stack(state_trajectories, axis=2)
         control_trajectory_array = np.stack(control_trajectories, axis=2)
         error_array = np.asarray(errors, dtype=float)
     # TODO: I also don't get this part.
@@ -564,7 +561,7 @@ class Transitioner(
         Labels for states. When supplied, :meth:`transform` returns a DataFrame
         whose row index identifies each transition endpoint. If omitted for
         DataFrame input, labels are inferred from its index.
-    store_trajectories : bool, default=True
+    store_state_trajectories : bool, default=True
         Whether to retain state trajectories from the latest transform call.
     store_control_trajectories : bool, default=True
         Whether to retain control trajectories from the latest transform call.
@@ -590,7 +587,7 @@ class Transitioner(
         c=1,
         node_labels=None,
         state_labels=None,
-        store_trajectories=True,
+        store_state_trajectories=True,
         store_control_trajectories=True,
     ):
         self.A = A
@@ -611,7 +608,7 @@ class Transitioner(
         self.c = c
         self.node_labels = node_labels
         self.state_labels = state_labels
-        self.store_trajectories = store_trajectories
+        self.store_state_trajectories = store_state_trajectories
         self.store_control_trajectories = store_control_trajectories
         
     def _fit_states(self, X):
@@ -659,8 +656,8 @@ class Transitioner(
         self.rho_ = rho
         self.n_features_in_ = states.shape[1]
         self.n_states_in_ = states.shape[0]
-        self.store_trajectories_ = _validate_boolean(
-            self.store_trajectories, "store_trajectories"
+        self.store_state_trajectories_ = _validate_boolean(
+            self.store_state_trajectories, "store_state_trajectories"
         )
         self.store_control_trajectories_ = _validate_boolean(
             self.store_control_trajectories,
@@ -734,7 +731,7 @@ class Transitioner(
             state_to_state_transition, func_memory_level=1
         )
 
-        trajectories, control_trajectories, self.errors_ = cached_transition(
+        state_trajectories, control_trajectories, self.errors_ = cached_transition(
             A=self.A_,
             T=self.T_,
             B=self.B_,
@@ -747,10 +744,10 @@ class Transitioner(
             xr=self.xr,
             expm_version=self.expm_version,
         )
-        if self.store_trajectories_:
-            self.trajectories_ = trajectories
+        if self.store_state_trajectories_:
+            self.state_trajectories_ = state_trajectories
         else:
-            self.__dict__.pop("trajectories_", None)
+            self.__dict__.pop("state_trajectories_", None)
         if self.store_control_trajectories_:
             self.control_trajectories_ = control_trajectories
         else:
@@ -789,10 +786,10 @@ class Transitioner(
     def get_transition_arrays(self):
         """Return retained trajectory arrays, or ``None`` when disabled."""
         check_is_fitted(self, attributes=["errors_"])
-        trajectories = getattr(self, "trajectories_", None)
+        state_trajectories = getattr(self, "state_trajectories_", None)
         control_trajectories = getattr(self, "control_trajectories_", None)
         return (
-            None if trajectories is None else trajectories.copy(),
+            None if state_trajectories is None else state_trajectories.copy(),
             (
                 None
                 if control_trajectories is None

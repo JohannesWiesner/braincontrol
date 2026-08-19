@@ -517,8 +517,8 @@ def test_transitioner_validates_label_lengths(transition_data):
 @pytest.mark.parametrize(
     ("parameter", "value"),
     [
-        ("store_trajectories", None),
-        ("store_trajectories", 1),
+        ("store_state_trajectories", None),
+        ("store_state_trajectories", 1),
         ("store_control_trajectories", "yes"),
     ],
 )
@@ -540,7 +540,7 @@ def test_transitioner_can_disable_large_array_storage(transition_data):
         A=adjacency,
         T=0.002,
         order="combinations",
-        store_trajectories=False,
+        store_state_trajectories=False,
         store_control_trajectories=False,
     )
 
