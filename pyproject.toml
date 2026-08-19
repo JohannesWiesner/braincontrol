@@ -13,7 +13,7 @@ readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.9"
 dependencies = [
-    "nctpy==1.0.1",
+    "nctpy @ git+https://github.com/JohannesWiesner/control_package.git",
 ]
 
 [project.optional-dependencies]
