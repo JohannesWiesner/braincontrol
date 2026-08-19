@@ -216,9 +216,7 @@ def _set_transition_order(n_states, order):
     ]
     return len(transition_indices), transition_indices
 
-
-# FIXME: Should be renamed to state_to_state_trajectories
-def state_to_state_transition(
+def state_to_state_trajectories(
     A,
     T,
     B,
@@ -728,7 +726,7 @@ class Transitioner(
 
         transition_order = self.order
         cached_transition = self._cache(
-            state_to_state_transition, func_memory_level=1
+            state_to_state_trajectories, func_memory_level=1
         )
 
         state_trajectories, control_trajectories, self.errors_ = cached_transition(
@@ -818,5 +816,5 @@ __all__ = [
     "Transitioner",
     "get_state_to_state_df",
     "state_to_state_integration",
-    "state_to_state_transition",
+    "state_to_state_trajectories",
 ]

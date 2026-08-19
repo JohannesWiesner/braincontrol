@@ -17,7 +17,7 @@ from braincontrol.transitions import (
     _validate_transition_inputs,
     get_state_to_state_df,
     state_to_state_integration,
-    state_to_state_transition,
+    state_to_state_trajectories,
 )
 
 # TODO: Add little docstrings to each test function so we know what it is testing
@@ -44,7 +44,7 @@ def _compute_validated_transition(
     A, T, B, X, rho, S, _ = _validate_transition_inputs(
         A, T, B, X, rho, S, energy_type, order, system
     )
-    return state_to_state_transition(
+    return state_to_state_trajectories(
         A=A,
         T=T,
         B=B,
