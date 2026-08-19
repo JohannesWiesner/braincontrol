@@ -84,7 +84,9 @@ def _validate_normalization_inputs(normalize_A, c):
 
 def _resolve_state_input(X=None, x0=None, xf=None):
     """Validate and return one of the supported state-input forms. Returns
-    either X or [x0,xf]"""
+    either X or [x0,xf]."""
+    
+    # FIXME: This part is fine
     endpoints_provided = x0 is not None or xf is not None
     if X is not None and endpoints_provided:
         raise ValueError("Provide either X or x0 and xf, not both")
@@ -95,6 +97,9 @@ def _resolve_state_input(X=None, x0=None, xf=None):
     if x0 is None or xf is None:
         raise ValueError("x0 and xf must be provided together")
 
+    # FIXME: This part has to be reworked. The function should only check that
+    # x0 and xf have the same datatype and checking the same number of nodes
+    # only makes sense if both x0 and xf are array like
     endpoint_arrays = []
     endpoint_is_numeric = []
     for endpoint, name in ((x0, "x0"), (xf, "xf")):
@@ -102,6 +107,9 @@ def _resolve_state_input(X=None, x0=None, xf=None):
             array = np.asarray(endpoint)
         except Exception:
             array = None
+        # FIXME: It makes sense to check that x0 and xf have the same dataype
+        # but this datatype must not necessarily be np.number because x0 and xf
+        # can also be Paths to nifti-files
         is_numeric = array is not None and np.issubdtype(array.dtype, np.number)
         endpoint_is_numeric.append(is_numeric)
         if is_numeric:
@@ -276,6 +284,8 @@ def state_to_state_trajectories(
         solver_rho = rho
         solver_S = S
 
+    # FIXME: I think this can be made more memory efficient. The function
+    # knows T so we can already define empty arrays that have the appropriate size
     state_trajectories = []
     control_trajectories = []
     errors = []
@@ -296,14 +306,14 @@ def state_to_state_trajectories(
         control_trajectories.append(control_trajectory)
         errors.append(error)
         
-    # TODO: I don't get this part. Why would n_transitions ever be None?
-    # NOTE: The absolute minium that we can do is to provide on state
-    # and to compute stability.
+
     if n_transitions:
         trajectory_array = np.stack(state_trajectories, axis=2)
         control_trajectory_array = np.stack(control_trajectories, axis=2)
         error_array = np.asarray(errors, dtype=float)
-    # TODO: I also don't get this part.
+    # TODO: I don't get this part. Why would n_transitions ever be None?
+    # NOTE: The absolute minimum that we can do is to provide on state
+    # and to compute stability.
     else:
         if system == "continuous":
             n_trajectory_points = round(T / 0.001) + 1
@@ -446,6 +456,8 @@ def _state_transition_index(state_labels, order, n_transitions):
         names=["endpoint", *level_names],
     )
 
+# TODO: Not sure about this. If neither node_labels nor state_labels
+# are defined, then just return numpy array?
 def get_state_to_state_df(
     state_to_state_array,
     order,
@@ -608,7 +620,8 @@ class Transitioner(
         self.state_labels = state_labels
         self.store_state_trajectories = store_state_trajectories
         self.store_control_trajectories = store_control_trajectories
-        
+    
+    # FIXME: .fit() should only fit, but not manipulate any data
     def _fit_states(self, X):
         if _is_state_matrix(X):
             self.masker_ = None
@@ -628,6 +641,7 @@ class Transitioner(
             raise ValueError("This transformer was fitted without an image masker")
         return _as_2d_float_array(self.masker_.transform(X), "masked X")
 
+    # FIXME: .fit() should only fit, but not manipulate any data (i.e. no masking)
     def fit(self, X=None, y=None, *, x0=None, xf=None):
         """Fit the optional image masker and validate the transition inputs."""
         self._fit_cache()
