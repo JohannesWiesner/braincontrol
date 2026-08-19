@@ -665,13 +665,6 @@ class Transitioner(
             return False
         return array.ndim == 2 and np.issubdtype(array.dtype, np.number)
     
-    # FIXME: Don't use nested functions here. Delete the function above and put
-    # the logic here.
-    @staticmethod
-    def _resolve_state_input(X=None, x0=None, xf=None):
-        """Delegate state-input validation to the shared validation helper."""
-        return _resolve_state_input(X=X, x0=x0, xf=xf)
-
     def _fit_states(self, X):
         if self._is_state_matrix(X):
             self.masker_ = None
