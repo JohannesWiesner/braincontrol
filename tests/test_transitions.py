@@ -16,7 +16,6 @@ from braincontrol.transitions import (
     _set_transition_order,
     _validate_transition_inputs,
     get_state_to_state_df,
-    get_transition_info,
     state_to_state_integration,
     state_to_state_transition,
 )
@@ -225,7 +224,6 @@ def test_transitioner_accepts_minimal_energy_with_rho_and_S_none(
     energies = transitioner.fit_transform(states)
     assert energies.shape == (3, 2)
 
-
 def test_discrete_transition_preserves_integer_horizon():
     adjacency = np.diag([0.3, 0.2])
     states = np.array([[1.0, 0.0], [0.0, 1.0]])
@@ -241,16 +239,6 @@ def test_discrete_transition_preserves_integer_horizon():
     assert control_trajectories.shape == (2, 2, 1)
     assert errors.shape == (1, 2)
 
-
-def test_transition_info_matches_transition_order():
-    assert get_transition_info(["rest", "task"], "product") == [
-        ("rest", "rest"),
-        ("rest", "task"),
-        ("task", "rest"),
-        ("task", "task"),
-    ]
-
-
 def test_state_to_state_dataframe_has_only_label_parameters():
     assert list(inspect.signature(get_state_to_state_df).parameters) == [
         "state_to_state_array",
@@ -259,18 +247,15 @@ def test_state_to_state_dataframe_has_only_label_parameters():
         "state_labels",
     ]
 
-
 def test_transitioner_is_the_only_public_transition_class():
     assert transitions.__all__[0] == "Transitioner"
     assert not hasattr(transitions, "TransitionTransformer")
     assert not hasattr(transitions, "StateTransitionTransformer")
 
-
 def test_removed_transition_helpers_are_not_public():
     assert not hasattr(transitions, "state_to_state_aggregation")
     assert not hasattr(transitions, "state_to_state_comparison")
     assert not hasattr(transitions, "get_state_comparison_df")
-
 
 def test_state_labels_accept_a_named_index():
     state_labels = pd.Index(["rest", "task"], name="condition")
@@ -284,7 +269,6 @@ def test_state_labels_accept_a_named_index():
         (("source", "target"), ("rest", "rest")),
         (("source", "target"), ("task", "task")),
     ]
-
 
 def test_state_labels_accept_multiindex_like_tuples():
     state_labels = [
@@ -308,7 +292,6 @@ def test_state_labels_accept_multiindex_like_tuples():
         ("rest", "task"),
     )
 
-
 def test_state_labels_validate_input_and_transition_count():
     with pytest.raises(ValueError, match="rows do not match state_labels"):
         get_state_to_state_df(
@@ -322,7 +305,6 @@ def test_state_labels_validate_input_and_transition_count():
             "stability",
             state_labels={"state": ["rest"]},
         )
-
 
 def test_state_to_state_dataframe_with_hierarchical_labels():
     energies = np.arange(12, dtype=float).reshape(6, 2)
@@ -352,7 +334,6 @@ def test_state_to_state_dataframe_with_hierarchical_labels():
     assert result.columns.equals(node_labels)
     np.testing.assert_array_equal(result.to_numpy(), energies)
 
-
 def test_state_to_state_dataframe_accepts_a_multiindex():
     energies = np.arange(12, dtype=float).reshape(3, 4)
     node_labels = pd.MultiIndex.from_arrays(
@@ -375,7 +356,6 @@ def test_state_to_state_dataframe_accepts_a_multiindex():
     assert result.columns.equals(node_labels)
     assert result.columns[2] == ("sensory", "visual", "dorsal", "C")
 
-
 def test_node_labels_accept_a_list_like_object():
     energies = np.arange(4, dtype=float).reshape(2, 2)
     node_labels = pd.Index(
@@ -387,7 +367,6 @@ def test_node_labels_accept_a_list_like_object():
     )
     assert result.columns.equals(node_labels)
     np.testing.assert_array_equal(result.to_numpy(), energies)
-
 
 def test_node_labels_accept_multiindex_like_tuples():
     energies = np.arange(6, dtype=float).reshape(2, 3)

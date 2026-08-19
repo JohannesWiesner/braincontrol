@@ -327,7 +327,8 @@ def state_to_state_transition(
 def state_to_state_integration(control_trajectories):
     """Integrate squared control trajectories for every transition."""
     
-    # FIXME: This function should not validate input
+    # FIXME: This function should not validate input. If this has to be
+    # validated it should be done somehwere else.
     control_trajectories = np.asarray(control_trajectories, dtype=float)
     if control_trajectories.ndim != 3:
         raise ValueError(
@@ -347,16 +348,6 @@ def state_to_state_integration(control_trajectories):
             control_trajectories[:, :, transition]
         )
     return energies
-
-# FIXME: This is never used? So we can delete it?
-def get_transition_info(state_labels, order):
-    """Pair state labels in the same order as the requested transitions."""
-    labels = list(state_labels)
-    _, transition_indices = _set_transition_order(len(labels), order)
-    return [
-        (labels[source], labels[target])
-        for _, source, target in transition_indices
-    ]
 
 def _coerce_labels(labels, expected_length, parameter_name):
     """Return list-like labels as a pandas Index or MultiIndex."""
@@ -829,8 +820,6 @@ class Transitioner(
 __all__ = [
     "Transitioner",
     "get_state_to_state_df",
-    "get_transition_df",
-    "get_transition_info",
     "state_to_state_integration",
     "state_to_state_transition",
 ]
