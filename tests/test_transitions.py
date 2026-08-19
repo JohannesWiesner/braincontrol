@@ -16,7 +16,6 @@ from braincontrol.transitions import (
     _set_transition_order,
     _validate_transition_inputs,
     get_state_to_state_df,
-    get_transition_df,
     get_transition_info,
     state_to_state_integration,
     state_to_state_transition,
@@ -132,15 +131,6 @@ def test_transition_matches_nctpy(transition_data):
     energies = state_to_state_integration(control_trajectories)
     assert energies.shape == (6, 2)
     np.testing.assert_allclose(energies[0], integrate_u(expected_u))
-
-
-def test_transition_dataframe_validates_node_count(transition_data):
-    adjacency, states = transition_data
-    with pytest.raises(ValueError, match="one column per node"):
-        get_transition_df(
-            adjacency, 0.002, "identity", states[:, :1], order="permutations"
-        )
-
 
 def test_validate_transition_inputs_rejects_invalid_order(transition_data):
     adjacency, states = transition_data
@@ -450,25 +440,6 @@ def test_node_labels_validate_input_and_length():
             "stability",
             node_labels=pd.DataFrame({"node": ["A", "B"]}),
         )
-
-
-def test_transition_dataframe_end_to_end(transition_data):
-    adjacency, states = transition_data
-    result = get_transition_df(
-        A=adjacency,
-        T=0.002,
-        B="identity",
-        X=states,
-        order="combinations",
-        system="continuous",
-        state_labels=["rest", "task", "recovery"],
-    )
-    assert result.shape == (3, 2)
-    assert result.index.tolist() == [
-        (("source", "target"), ("rest", "task")),
-        (("source", "target"), ("rest", "recovery")),
-        (("source", "target"), ("task", "recovery")),
-    ]
 
 
 def test_transitioner_with_state_matrix(transition_data):

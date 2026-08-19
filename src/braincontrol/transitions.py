@@ -326,6 +326,8 @@ def state_to_state_transition(
 
 def state_to_state_integration(control_trajectories):
     """Integrate squared control trajectories for every transition."""
+    
+    # FIXME: This function should not validate input
     control_trajectories = np.asarray(control_trajectories, dtype=float)
     if control_trajectories.ndim != 3:
         raise ValueError(
@@ -337,6 +339,7 @@ def state_to_state_integration(control_trajectories):
             "control_trajectories must contain only finite values"
         )
 
+    # FIXME: we can keep the following
     n_nodes, n_transitions = control_trajectories.shape[1:]
     energies = np.empty((n_transitions, n_nodes))
     for transition in range(n_transitions):
@@ -500,50 +503,6 @@ def get_state_to_state_df(
             state_labels, order, n_transitions
         )
     return pd.DataFrame(values, index=transition_index, columns=node_labels)
-
-# FIXME: This is never used. Instead, in Transitioner, the .transform() method does
-# exactly this.
-def get_transition_df(
-    A,
-    T,
-    B,
-    X,
-    rho=1,
-    S="identity",
-    energy_type="optimal",
-    order="permutations",
-    **kwargs,
-):
-    """Compute integrated transition energy and return it as a DataFrame."""
-    system = kwargs.pop("system", "continuous")
-    xr = kwargs.pop("xr", "zero")
-    expm_version = kwargs.pop("expm_version", "scipy")
-    A, T, B, X, rho, S, _ = _validate_transition_inputs(
-        A,
-        T,
-        B,
-        X,
-        rho,
-        S,
-        energy_type,
-        order,
-        system,
-    )
-    _, control_trajectories, _ = state_to_state_transition(
-        A=A,
-        T=T,
-        B=B,
-        X=X,
-        rho=rho,
-        S=S,
-        energy_type=energy_type,
-        order=order,
-        system=system,
-        xr=xr,
-        expm_version=expm_version,
-    )
-    energies = state_to_state_integration(control_trajectories)
-    return get_state_to_state_df(energies, order=order, **kwargs)
 
 class Transitioner(
     TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output_keys=None
