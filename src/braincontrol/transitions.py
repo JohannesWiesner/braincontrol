@@ -21,6 +21,17 @@ from sklearn.utils.validation import check_is_fitted
 ## Input validation
 ########################################################################################
 
+# FIXME: Add docs here what this function is doing.
+# FIXME: We don't have to work with try-except? The input is either
+# X, or [x0,xf], or 4D-iimg or [3DImg,3dimg] so we can use is-Niimg-like?
+# https://nilearn.github.io/dev/modules/generated/nilearn.image.check_niimg.html#nilearn.image.check_niimg
+def _is_state_matrix(X):
+    try:
+        array = np.asarray(X)
+    except Exception:
+        return False
+    return array.ndim == 2 and np.issubdtype(array.dtype, np.number)
+
 def _as_2d_float_array(value, name):
     """Check that input is (or can be converted into) a finite, two-dimensional floating-point array."""
     array = np.asarray(value, dtype=float)
@@ -653,20 +664,8 @@ class Transitioner(
         self.store_trajectories = store_trajectories
         self.store_control_trajectories = store_control_trajectories
         
-    # FIXME: Add docs here what this function is doing.
-    # FIXME: We don't have to work with try-except? The input is either
-    # X, or [x0,xf], or 4D-iimg or [3DImg,3dimg] so we can use is-Niimg-like?
-    # https://nilearn.github.io/dev/modules/generated/nilearn.image.check_niimg.html#nilearn.image.check_niimg
-    @staticmethod
-    def _is_state_matrix(X):
-        try:
-            array = np.asarray(X)
-        except Exception:
-            return False
-        return array.ndim == 2 and np.issubdtype(array.dtype, np.number)
-    
     def _fit_states(self, X):
-        if self._is_state_matrix(X):
+        if _is_state_matrix(X):
             self.masker_ = None
             return _as_2d_float_array(X, "X")
         if self.masker is None:
@@ -678,7 +677,7 @@ class Transitioner(
         return _as_2d_float_array(self.masker_.fit_transform(X), "masked X")
 
     def _transform_states(self, X):
-        if self._is_state_matrix(X):
+        if _is_state_matrix(X):
             return _as_2d_float_array(X, "X")
         if self.masker_ is None:
             raise ValueError("This transformer was fitted without an image masker")
