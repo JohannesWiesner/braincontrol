@@ -618,7 +618,6 @@ def _state_transition_index(state_labels, order):
     ``order``. For MultiIndex input, the original levels and their names are
     preserved.
     """
-    
     n_states = len(state_labels)
     _, transition_indices = _set_transition_order(
         n_states,
@@ -650,8 +649,12 @@ def _state_transition_index(state_labels, order):
         for _, source, target in transition_indices
     ]
 
+    # Keep each (source, target) tuple as one scalar Index value.
+    values = np.empty(len(transition_values), dtype=object)
+    values[:] = transition_values
+
     return pd.Index(
-        transition_values,
+        values,
         name=state_labels.name,
     )
 
