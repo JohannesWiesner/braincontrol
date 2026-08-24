@@ -843,7 +843,10 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             self._fit_masker(self.X_)
             self.n_nodes_in_ = self.masker_.n_elements_
             self.n_states_in_ = self.X_.shape[3]
-            node_labels_inferred = pd.MultiIndex.from_frame(self.masker_.lut_)
+
+            lut = self.masker_.lut_
+            lut = lut.loc[lut["index"] != self.masker_.background_label].reset_index(drop=True)
+            node_labels_inferred = pd.MultiIndex.from_frame(lut)
         
         # set sklearn-standard alias
         self.n_features_in_ = self.n_nodes_in_
