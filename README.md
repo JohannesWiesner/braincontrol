@@ -1,6 +1,8 @@
-# braincontrol
+<img src="assets/logo.svg" alt="braincontrol logo" width="400">
 
-Network Control Theory for Neuroimaging Data.
+## Installation
+
+Install via `pip install braincontrol`
 
 ## State transitions
 
