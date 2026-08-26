@@ -45,18 +45,18 @@ def get_transition_trajectories(
         A validated, normalized adjacency matrix.
     X : ndarray of shape (n_states, n_nodes)
         Validated state matrix with one state per row.
-    T : float
+    T : float or int
         Time horizon.
     B : ndarray of shape (n_nodes, n_nodes)
         Validated control input matrix.
-    rho : float or None
+    rho : float
         Mixing parameter used by :func:`nctpy.energies.get_control_inputs`.
-    S : ndarray of shape (n_nodes, n_nodes) or None
+    S : ndarray of shape (n_nodes, n_nodes)
         Validated state-trajectory constraint matrix.
     order : {"combinations", "permutations", "product", "stability"}
         State-pair selection and ordering.
     system : {"continuous", "discrete"}, default="continuous"
-        Time system used to normalize ``A``.
+        Time system used for the control computation.
     xr : array-like or str, default="zero"
         Reference state passed to ``nctpy``.
     expm_version : {"scipy", "eig"}, default="scipy"
@@ -64,21 +64,35 @@ def get_transition_trajectories(
 
     Returns
     -------
-    state_trajectories : ndarray of shape (n_time_points, n_nodes, n_transitions)
-    control_trajectories : ndarray of shape (n_time_points, n_nodes, n_transitions)
+    state_trajectories : ndarray
+        State trajectories with shape
+        ``(n_state_time_points, n_nodes, n_transitions)``.
+    control_trajectories : ndarray
+        Control trajectories with shape
+        ``(n_control_time_points, n_nodes, n_transitions)``.
     errors : ndarray of shape (n_transitions, 2)
         Numerical errors reported by ``nctpy`` for each transition.
     """
     
-    _, transition_indices = _set_transition_order(X.shape[0], order)
+    n_transitions, transition_indices = _set_transition_order(X.shape[0],order)
+    n_nodes = X.shape[1]
 
-    # TODO: I think this can be made more memory efficient. The function
-    # knows T so we can already define empty arrays that have the appropriate size
-    # See: https://github.com/LindenParkesLab/nctpy/blob/866d7ec7d08cb68d6fb4f469b85d670f67a2e78a/src/nctpy/energies.py#L303-L308
-    state_trajectories = []
-    control_trajectories = []
-    errors = []
-    for _, source, target in transition_indices:
+    # TODO: This should be exposed by nctpy!
+    # 0.001 is hardcoded for now, but it would be better if we could
+    # import STEP from nctpy so we always use nctpy as origin 
+    if system == "continuous":
+        n_state_time_points = int(np.round(T / 0.001) + 1)
+        n_control_time_points = n_state_time_points
+    else:
+        n_state_time_points = T + 1
+        n_control_time_points = T
+
+    state_trajectories = np.empty((n_state_time_points, n_nodes, n_transitions),dtype=float)
+    control_trajectories = np.empty((n_control_time_points, n_nodes, n_transitions),dtype=float)
+    errors = np.empty((n_transitions, 2),dtype=float)
+
+    for transition, source, target in transition_indices:
+        
         state_trajectory, control_trajectory, error = get_control_inputs(
             A_norm=A,
             T=T,
@@ -91,15 +105,12 @@ def get_transition_trajectories(
             xr=xr,
             expm_version=expm_version,
         )
-        state_trajectories.append(state_trajectory)
-        control_trajectories.append(control_trajectory)
-        errors.append(error)
-        
-    trajectory_array = np.stack(state_trajectories, axis=2)
-    control_trajectory_array = np.stack(control_trajectories, axis=2)
-    error_array = np.asarray(errors, dtype=float)
 
-    return trajectory_array, control_trajectory_array, error_array
+        state_trajectories[:, :, transition] = state_trajectory
+        control_trajectories[:, :, transition] = control_trajectory
+        errors[transition] = error
+
+    return state_trajectories, control_trajectories, errors
 
 def get_transition_energy(control_trajectories):
     """Integrate squared control trajectories for every transition."""
