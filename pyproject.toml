@@ -14,6 +14,7 @@ license = { text = "MIT" }
 requires-python = ">=3.9"
 dependencies = [
     "nctpy @ git+https://github.com/JohannesWiesner/control_package.git",
+    "xarray"
 ]
 
 [project.optional-dependencies]

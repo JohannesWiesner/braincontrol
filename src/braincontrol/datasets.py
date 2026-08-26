@@ -6,22 +6,12 @@ Utilities to get example datasets for braincontrol
 @author: johannes.wiesner
 """
 
-from nilearn.datasets import fetch_localizer_button_task
-from nilearn.datasets import fetch_localizer_contrasts
 from nilearn.datasets import fetch_neurovault_ids
-
-
-
-from braincontrol.transitions import Transitioner
-from nilearn.maskers import NiftiLabelsMasker
-from nilearn.plotting import plot_stat_map
-from nilearn.datasets import fetch_atlas_schaefer_2018
 from pathlib import Path
 from shutil import copyfileobj
 from urllib.request import Request, urlopen
 import numpy as np
 import pandas as pd
-from nilearn.image import load_img
 
 ###############################################################################
 # Constants

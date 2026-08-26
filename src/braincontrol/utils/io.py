@@ -11,6 +11,7 @@ import pandas as pd
 from collections.abc import Mapping
 from .validation import _validate_choice
 from itertools import combinations, permutations, product
+import xarray as xr
 
 # TODO: Find more suitable names for order choices
 def _set_transition_order(n_states, order):
@@ -149,4 +150,66 @@ def _state_transition_index(state_labels, order):
     return pd.Index(
         values,
         name=state_labels.name,
+    )
+
+
+def _get_trajectory_array(
+    array,
+    *,
+    node_labels=None,
+    transition_labels=None,
+    name=None,
+):
+    """Return a trajectory array as a labelled xarray DataArray.
+
+    Parameters
+    ----------
+    array : ndarray of shape (n_time_points, n_nodes, n_transitions)
+        Trajectory values.
+    node_labels : pd.Index or pd.MultiIndex, optional
+        Labels for the node dimension.
+    transition_labels : pd.Index or pd.MultiIndex, optional
+        Labels for the transition dimension.
+    name : str, optional
+        Name of the returned DataArray.
+
+    Returns
+    -------
+    xarray.DataArray or None
+        Labelled trajectory array, or ``None`` if ``array`` is ``None``.
+    """
+    if array is None:
+        return None
+
+    coords = {
+        "time": np.arange(array.shape[0]),
+    }
+
+    if node_labels is not None:
+        if isinstance(node_labels, pd.MultiIndex):
+            coords.update(
+                xr.Coordinates.from_pandas_multiindex(
+                    node_labels,
+                    dim="node",
+                )
+            )
+        else:
+            coords["node"] = node_labels
+
+    if transition_labels is not None:
+        if isinstance(transition_labels, pd.MultiIndex):
+            coords.update(
+                xr.Coordinates.from_pandas_multiindex(
+                    transition_labels,
+                    dim="transition",
+                )
+            )
+        else:
+            coords["transition"] = transition_labels
+
+    return xr.DataArray(
+        array.copy(),
+        dims=("time", "node", "transition"),
+        coords=coords,
+        name=name,
     )
