@@ -390,7 +390,6 @@ def _resolve_state_input(X=None, x0=None, xf=None):
         "or both be Niimg-like objects"
     )
     
-    
 def _validate_transition_order(n_states, order):
     """Validate that the requested transition order is possible."""
     order = _validate_choice(

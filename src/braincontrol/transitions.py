@@ -254,29 +254,27 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     ):
         """Validate and resolve Network Control Theory parameters."""
         
-        # categorical parameters
+        # validate categorical parameters
         # FIXME: xr can also be a vector!
         _validate_choice(energy_type,"energy_type",("minimal", "optimal"))
         _validate_choice(system,"system",("continuous", "discrete"))
         _validate_choice(xr,"xr",("x0", "xf", "zero", "midpoint"),)
         _validate_choice(expm_version,"expm_version",("scipy", "eig"))
     
-        # adjacency matrix and normalization parameters
+        # validate adjacency matrix and normalization parameters
         _validate_square_matrix(A,"A")
         _validate_boolean(normalize_A,"normalize_A")
         _validate_positive_real(c,"c")
 
-    
-        # control input matrix
+        # validate control input matrix
         _validate_square_matrix_or_identity(B,"B")
     
-        # energy-specific parameters
+        # validate energy-specific parameters rho and S
         if energy_type == "minimal":
             
             if rho is not None or S is not None:
                 raise ValueError(
-                    "rho and S must both be None when "
-                    "energy_type='minimal'"
+                    "rho and S must both be None when energy_type='minimal'"
                 )
     
             # nctpy requires a positive rho internally even when S is zero.
@@ -286,44 +284,35 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             
             if rho is None or S is None:
                 raise ValueError(
-                    "rho and S must both be provided when "
-                    "energy_type='optimal'"
+                    "rho and S must both be provided when energy_type='optimal'"
                 )
     
             _validate_rho(rho)
             _validate_square_matrix_or_identity(S,"S")
     
-        # time horizon
+        # validate time horizon
         _validate_time_horizon(T,system)
     
-        # resolve matrices
+        # resolve matrix A        
         A = np.asarray(A)
         n_nodes = A.shape[0]
-    
-        A_norm = (A.copy()
-            if not normalize_A
-            else matrix_normalization(
-                A,
-                system,
-                c,
-            )
-        )
-    
+        
+        if normalize_A:
+            A_norm = matrix_normalization(A,system,c)
+        else:
+            A_norm = A.copy()
+            
+        # resolve matrix B
         B = _resolve_array_or_identity(B,n_nodes)
+        
+        # resolve matrix S
+        if energy_type == "minimal":
+            S = np.zeros_like(A)
+        else:
+            S = _resolve_array_or_identity(S,n_nodes)
     
-        S = (
-            np.zeros_like(A)
-            if energy_type == "minimal"
-            else _resolve_array_or_identity(
-                S,
-                n_nodes,
-            )
-        )
-    
-        _validate_same_shape(
-            [A, B, S],
-            ["A", "B", "S"],
-        )
+        # all matrices must have the same shape
+        _validate_same_shape([A, B, S],["A", "B", "S"])
     
         return {
             "A": A,
@@ -378,7 +367,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         """
         
         # resolve state input, which will return either pandas dataframe or 4D-image
-        self.X_ = _resolve_state_input(X=X,x0=x0,xf=xf)
+        self.X_ = _resolve_state_input(X=X,x0=x0,xf=xf) # TODO: Do we even want to store this?
         self.X_type_ = _is_niimg_or_tabular_like(self.X_)
 
         if self.X_type_ == "tabular_like":
@@ -438,12 +427,8 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             self.c,
         )
         
-        for name, value in nct_parameters.items():
-            setattr(
-                self,
-                f"{name}_",
-                value,
-            )
+        for attr,value in nct_parameters.items():
+            setattr(self,f"{attr}_",value)
             
         # validate boolean options
         _validate_boolean(self.store_state_trajectories, "store_state_trajectories")
@@ -480,6 +465,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             """
 
         # check that all needed inputs exist
+        # FIXME: Check this (some can be dropped others have to be added?)
         check_is_fitted(
             self,
             attributes=[
@@ -493,7 +479,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             ],
         )
     
-
         # Resolve transform input into a consistent representation.
         X_resolved = _resolve_state_input(X=X,x0=x0,xf=xf)
     
