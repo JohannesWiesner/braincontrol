@@ -356,6 +356,8 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 f"{', '.join(required_attributes)}"
             )
     
+    # FIXME: Still don't like this in terms of readability. How
+    # about _resolve_state_input also outputs node_labels?
     def _fit_states(
         self,
         X,
