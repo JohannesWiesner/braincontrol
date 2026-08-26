@@ -7,17 +7,25 @@ example, :class:`nilearn.maskers.NiftiLabelsMasker`).
 
 import numpy as np
 import pandas as pd
-from .utils.io import _set_transition_order
-from .utils.io import _coerce_labels
-from .utils.io import _state_transition_index
-from .utils.io import _get_trajectory_array
-from .utils.validation import _resolve_array_or_identity
-from .utils.validation import _resolve_state_input
-from .utils.validation import _validate_same_shape
-from .utils.validation import _is_niimg_or_tabular_like
-from .utils.validation import _validate_boolean
-from .utils.validation import _validate_transition_inputs
-from .utils.validation import _validate_transition_order
+
+from braincontrol.utils.io import (
+    _coerce_labels,
+    _get_trajectory_array,
+    _set_transition_order,
+    _state_transition_index,
+)
+from braincontrol.utils.validation import (
+    _is_niimg_or_tabular_like,
+    _resolve_array_or_identity,
+    _resolve_state_input,
+    _validate_adjacency_inputs,
+    _validate_boolean,
+    _validate_choice,
+    _validate_same_shape,
+    _validate_square_matrix_or_identity,
+    _validate_transition_order,
+)
+
 from nctpy.energies import get_control_inputs, integrate_u
 from nctpy.utils import matrix_normalization
 from nilearn._utils.cache_mixin import CacheMixin
@@ -240,36 +248,158 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         self.store_state_trajectories = store_state_trajectories
         self.store_control_trajectories = store_control_trajectories
     
-    def _fit_matrices(self):
-        '''fit matrices `A`, `B`, `S`. 
-        As A is the only object provided in init, everything else will be valdiated against it'''
+    def _fit_nct_parameters(self,
+        A,
+        T,
+        B,
+        rho,
+        S,
+        energy_type,
+        system,
+        xr,
+        expm_version,
+        normalize_A,
+        c,
+    ):
+        """Validate and resolve Network Control Theory parameters"""
         
-        # fit A
-        self.A_ = np.asarray(self.A)
-        self.n_nodes_ = self.A_.shape[0]
+        energy_type = _validate_choice(
+            energy_type,
+            "energy_type",
+            ("minimal", "optimal"),
+        )
     
-        # fit normalized A
-        self.A_norm_ = (
-            self.A_.copy()
-            if not self.normalize_A
+        system = _validate_choice(
+            system,
+            "system",
+            ("continuous", "discrete"),
+        )
+    
+        xr = _validate_choice(
+            xr,
+            "xr",
+            ("x0", "xf", "zero", "midpoint"),
+        )
+    
+        expm_version = _validate_choice(
+            expm_version,
+            "expm_version",
+            ("scipy", "eig"),
+        )
+    
+        _validate_adjacency_inputs(
+            A,
+            normalize_A,
+            c,
+        )
+    
+        _validate_square_matrix_or_identity(
+            B,
+            "B",
+        )
+    
+        if energy_type == "minimal":
+            if rho is not None or S is not None:
+                raise ValueError(
+                    "rho and S must both be None when "
+                    "energy_type='minimal'"
+                )
+    
+            rho = 1.0
+    
+        else:
+            if rho is None or S is None:
+                raise ValueError(
+                    "rho and S must both be provided when "
+                    "energy_type='optimal'"
+                )
+    
+            if (
+                isinstance(rho, (bool, np.bool_))
+                or not isinstance(rho, (float, np.floating))
+                or not np.isfinite(rho)
+                or rho <= 0.0
+                or rho > 1.0
+            ):
+                raise ValueError(
+                    "rho must be a positive finite float between 0 and 1 when "
+                    "energy_type='optimal"
+                )
+    
+            _validate_square_matrix_or_identity(
+                S,
+                "S",
+            )
+    
+        if isinstance(T, (bool, np.bool_)) or not np.isscalar(T):
+            raise TypeError(
+                "T must be a scalar number"
+            )
+    
+        if not np.isfinite(T) or T <= 0:
+            raise ValueError(
+                "T must be a positive finite number"
+            )
+    
+        if system == "discrete":
+            if not isinstance(T, (int, np.integer)) or T < 2:
+                raise ValueError(
+                    "T must be an integer of at least 2 "
+                    "for a discrete system"
+                )
+    
+        elif not isinstance(T, (float, np.floating)):
+            raise TypeError(
+                "T must be a float for a continuous system"
+            )
+    
+        # Resolve matrices.
+        A = np.asarray(A)
+        n_nodes = A.shape[0]
+    
+        A_norm = (
+            A.copy()
+            if not normalize_A
             else matrix_normalization(
-                self.A_,
-                self.system,
-                self.c,
+                A,
+                system,
+                c,
             )
         )
-
-        # fit B which is either provided or 'identity'
-        self.B_ = _resolve_array_or_identity(self.B,self.n_nodes_)
-        
-        # fit S which is either provided, or None, or 'identity'
-        if self.energy_type == "minimal":
-            self.S_ = np.zeros_like(self.A_)
+    
+        B = _resolve_array_or_identity(
+            B,
+            n_nodes,
+        )
+    
+        if energy_type == "minimal":
+            S = np.zeros_like(A)
         else:
-            self.S_ = _resolve_array_or_identity(self.S,self.n_nodes_,)
-        
-        # all matrices must have same shape
-        _validate_same_shape([self.A_,self.B_,self.S_],["A","B","S"])
+            S = _resolve_array_or_identity(
+                S,
+                n_nodes,
+            )
+    
+        _validate_same_shape(
+            [A, B, S],
+            ["A", "B", "S"],
+        )
+    
+        return {
+            "A": A,
+            "A_norm": A_norm,
+            "B": B,
+            "S": S,
+            "T": T,
+            "rho": rho,
+            "energy_type": energy_type,
+            "system": system,
+            "xr": xr,
+            "expm_version": expm_version,
+            "normalize_A": normalize_A,
+            "c": c,
+            "n_nodes": n_nodes,
+        }
         
     def _fit_masker(self, X):
         """Clone, fit, and validate the masker for image-like state input."""
@@ -352,14 +482,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         """Validate and fit all inputs, i.e. check nct parameters and check state inputs"""
         
         self._fit_cache()
-
-        # validate boolean options
-        self.store_state_trajectories_ = _validate_boolean(self.store_state_trajectories, "store_state_trajectories")
-        self.store_control_trajectories_ = _validate_boolean(self.store_control_trajectories,"store_control_trajectories")
         
         # validate all inputs used to compute transitions
-        # TODO: Maybe this should already provided the fitted outputs?
-        _validate_transition_inputs(
+        nct_parameters = self._fit_nct_parameters(
             self.A,
             self.T,
             self.B,
@@ -370,28 +495,18 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             self.xr,
             self.expm_version,
             self.normalize_A,
-            self.c
+            self.c,
         )
         
-        # validate and fit matrices. Sets A_, B_, S_
-        self._fit_matrices()
-        
+        for name, value in nct_parameters.items():
+            setattr(self, f"{name}_", value)
+
         # validate and fit state input. Sets X_
         self._fit_states(X,x0,xf,node_labels)
         
-        # set all other parameters
-        self.T_ = self.T
-        self.energy_type_ = self.energy_type
-        self.system_ = self.system
-        self.xr_ = self.xr
-        self.expm_version_ = self.expm_version
-        self.normalize_A_ = self.normalize_A
-        self.c_ = self.c
-        
-        if self.energy_type == "minimal":
-            self.rho_ = 1.0
-        else:
-            self.rho_ = self.rho
+        # validate boolean options
+        self.store_state_trajectories_ = _validate_boolean(self.store_state_trajectories, "store_state_trajectories")
+        self.store_control_trajectories_ = _validate_boolean(self.store_control_trajectories,"store_control_trajectories")
         
         # FIXME: What should .fit() return?
         return self
