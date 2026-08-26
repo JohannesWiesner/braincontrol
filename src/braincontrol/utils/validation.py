@@ -173,24 +173,20 @@ def _is_niimg_or_tabular_like(value):
 
     Niimg-like input includes:
 
-    - Any individual object whose type is included in Nilearn's
-      ``NiimgLike`` type alias, such as a NiBabel spatial image or a
-      supported image path.
-    - A non-empty list, tuple, or pandas Series whose elements are all
-      Niimg-like objects.
+    - Any individual object whose type is included in Nilearn's ``NiimgLike`` type alias.
+    - A non-empty list, tuple, or pandas Series whose elements are all Niimg-like objects.
 
     Tabular-like input includes:
 
     - NumPy arrays.
     - pandas DataFrames.
-    - pandas Series.
-    - Lists or tuples that are not recognized as collections of
-      Niimg-like objects.
+    - pandas Series that are not collections of Niimg-like objects.
+    - Lists or tuples that are not collections of Niimg-like objects.
 
-    Collections of Niimg-like objects are validated together with
-    :func:`nilearn.image.check_niimg`. Consequently, genuine image
-    validation errors, such as incompatible shapes or fields of view,
-    are propagated rather than treating the input as tabular.
+    Niimg-like input is validated with
+    :func:`nilearn.image.check_niimg`. Genuine image-validation errors,
+    such as incompatible shapes or fields of view, are propagated rather
+    than treating the input as tabular-like.
 
     Parameters
     ----------
@@ -207,10 +203,8 @@ def _is_niimg_or_tabular_like(value):
     TypeError
         If the input is neither Niimg-like nor tabular-like.
     ValueError
-        If the input is Niimg-like but fails Nilearn's image validation.
+        If Niimg-like input fails Nilearn validation.
     """
-    
-    # gets you all valid niimg-like data types
     niimg_types = get_args(NiimgLike)
 
     # Single Niimg-like object.
@@ -218,7 +212,7 @@ def _is_niimg_or_tabular_like(value):
         check_niimg(value)
         return "niimg_like"
 
-    # Collection input: either a collection of niimg-like or tabular-like.
+    # Collection input.
     if isinstance(value, (list, tuple, pd.Series)):
         if len(value) > 0 and all(
             isinstance(item, niimg_types)
@@ -237,158 +231,193 @@ def _is_niimg_or_tabular_like(value):
         "Input must be a Niimg-like or tabular-like object"
     )
 
-# TODO: What about the atleast4 option? 
-# https://nilearn.github.io/dev/modules/generated/nilearn.image.check_niimg.html#nilearn.image.check_niimg
-def _validate_single_state_niimg(value, name):
-    """Validate that Niimg-like input represents exactly one state."""
-    img = check_niimg(value)
+def _resolve_single_state_niimg(value, name):
+    """Resolve Niimg-like input representing exactly one state.
 
-    if img.ndim == 3:
-        return img
+    Three-dimensional input is converted to a singleton 4D image.
+    Existing 4D input must contain exactly one volume.
 
-    if img.ndim == 4 and img.shape[3] == 1:
-        return img
+    Parameters
+    ----------
+    value : Niimg-like
+        Image representing a single state.
+    name : str
+        Parameter name used in error messages.
 
-    raise ValueError(
-        f"{name} must represent exactly one state; "
-        f"got image shape {img.shape}"
+    Returns
+    -------
+    Niimg-like
+        Validated 4D image containing exactly one state.
+
+    Raises
+    ------
+    ValueError
+        If the image contains more than one state.
+    """
+    img = check_niimg(
+        value,
+        atleast_4d=True,
     )
 
-# TODO: Maybe this could also already output the output type then we would not
-# have to call _is_niimg_or_tabular_like later again
+    if img.shape[3] != 1:
+        raise ValueError(
+            f"{name} must represent exactly one state; "
+            f"got image shape {img.shape}"
+        )
+
+    return img
+
+# NOTE: Might be smart to split this up in the future for readability reasons
 def _resolve_state_input(X=None, x0=None, xf=None):
-    """Validate state input and return it in a consistent representation.
+    """Validate and resolve state input.
 
     States are represented by rows and nodes by columns for tabular input,
     and by volumes along the fourth dimension for Niimg-like input.
 
     Exactly one of the following must be provided:
 
-    - ``X``: a two-dimensional NumPy array, pandas DataFrame, or Niimg-like
-      object containing one or more states.
-    - ``x0`` and ``xf``: two one-dimensional NumPy arrays, two pandas Series,
-      or two Niimg-like objects representing one state each.
+    - ``X`` containing one or more states.
+    - ``x0`` and ``xf`` containing exactly one state each.
 
-    Tabular input is returned as a DataFrame with shape
-    ``(n_states, n_nodes)``. Niimg-like input is returned as a 4D Niimg-like
-    object with one volume per state.
+    Tabular input may be provided as a NumPy array, pandas DataFrame,
+    pandas Series, list, or tuple. Lists, tuples, and Series containing
+    exclusively Niimg-like objects are instead treated as Niimg-like
+    collections.
+
+    Tabular input is returned as a pandas DataFrame with shape
+    ``(n_states, n_nodes)``. Niimg-like input is returned as a 4D image with
+    one volume per state.
 
     Parameters
     ----------
-    X : np.ndarray, pd.DataFrame, or Niimg-like, optional
-        State input. For tabular input, rows represent states and columns
-        represent nodes. Niimg-like input may contain one or more states.
-    x0 : np.ndarray, pd.Series, or Niimg-like, optional
-        Initial state. Niimg-like input must represent exactly one state.
-    xf : np.ndarray, pd.Series, or Niimg-like, optional
-        Final state. Niimg-like input must represent exactly one state.
+    X : array-like, DataFrame, or Niimg-like, optional
+        State input containing one or more states.
+    x0 : array-like, Series, or Niimg-like, optional
+        Initial state.
+    xf : array-like, Series, or Niimg-like, optional
+        Final state.
 
     Returns
     -------
-    pd.DataFrame or Niimg-like
-        Resolved state input. Tabular input is returned as a DataFrame.
-        Niimg-like input is returned as a 4D image.
+    X_resolved : pd.DataFrame, Niimg-like or NumPy array
+        Resolved state input.
+    X_type : {"tabular_like", "niimg_like"}
+        Type of the resolved state input.
     """
+    
+    # check incompatible inputs
     endpoints_provided = x0 is not None or xf is not None
 
     if X is not None and endpoints_provided:
-        raise ValueError("Provide either X or x0 and xf, not both")
+        raise ValueError(
+            "Provide either X or x0 and xf, not both"
+        )
 
     if X is None and x0 is None and xf is None:
-        raise ValueError("Provide either X or both x0 and xf")
+        raise ValueError(
+            "Provide either X or both x0 and xf"
+        )
 
-    # X contains all states
+    # X contains all states.
     if X is not None:
+        
         X_type = _is_niimg_or_tabular_like(X)
 
+        # X is niimg-like
         if X_type == "niimg_like":
-            # concat_imgs guarantees a 4D representation.
-            return concat_imgs([X])
+            if isinstance(X, pd.Series):
+                X = X.tolist()
 
-        if not isinstance(X, (np.ndarray, pd.DataFrame)):
-            raise TypeError(
-                "X must be a NumPy array, pandas DataFrame, "
-                "or Niimg-like object"
-            )
+            X_resolved = check_niimg(X,atleast_4d=True)
 
-        _validate_2d_matrix_and_finite(X, "X")
+            return X_resolved, X_type
 
+        # X is dataframe
         if isinstance(X, pd.DataFrame):
-            return X.copy()
+            _validate_2d_matrix_and_finite(X,"X")
+            
+            X_resolved = X.copy()
 
-        return pd.DataFrame(X)
+            return X_resolved, X_type
 
-    # x0 and xf must be provided together
+        # X is array-like
+        X_array = np.asarray(X)
+        _validate_2d_matrix_and_finite(X_array,"X",)
+        X_resolved = X_array.copy()
+
+        return X_resolved, X_type
+
+    # x0 and xf must be provided together.
     if x0 is None or xf is None:
-        raise ValueError("x0 and xf must be provided together")
+        raise ValueError(
+            "x0 and xf must be provided together"
+        )
 
+    # x0 and xf must have the same type
     x0_type = _is_niimg_or_tabular_like(x0)
     xf_type = _is_niimg_or_tabular_like(xf)
 
     if x0_type != xf_type:
         raise TypeError("x0 and xf must use the same input type")
 
-    # Niimg-like endpoints
+    # Niimg-like endpoints.
     if x0_type == "niimg_like":
-        x0_img = _validate_single_state_niimg(x0, "x0")
-        xf_img = _validate_single_state_niimg(xf, "xf")
+        
+        x0_img = _resolve_single_state_niimg(x0,"x0")
+        xf_img = _resolve_single_state_niimg(xf,"xf")
+        X_resolved = concat_imgs([x0_img, xf_img])
 
-        return concat_imgs([x0_img, xf_img])
+        return X_resolved, "niimg_like"
 
     # Tabular endpoints must use the same concrete representation.
     if type(x0) is not type(xf):
         raise TypeError("x0 and xf must use the same input type")
 
-    if isinstance(x0, np.ndarray):
-        if x0.ndim != 1 or xf.ndim != 1:
-            raise ValueError(
-                "x0 and xf must be one-dimensional states"
-            )
-
-        if x0.shape != xf.shape:
-            raise ValueError(
-                "x0 and xf must contain the same number of nodes"
-            )
-
-        if x0.dtype != xf.dtype:
-            raise TypeError(
-                "x0 and xf must have the same dtype"
-            )
-
-        if not np.all(np.isfinite(x0)) or not np.all(np.isfinite(xf)):
-            raise ValueError(
-                "x0 and xf must contain only finite values"
-            )
-
-        return pd.DataFrame(
-            np.stack((x0, xf))
-        )
-
+    # Preserve Series node labels.
     if isinstance(x0, pd.Series):
         if not x0.index.equals(xf.index):
-            raise ValueError(
-                "x0 and xf must have matching indices"
-            )
+            raise ValueError("x0 and xf must have matching indices")
 
         if x0.dtype != xf.dtype:
-            raise TypeError(
-                "x0 and xf must have the same dtype"
-            )
+            raise TypeError("x0 and xf must have the same dtype")
 
-        if not np.all(np.isfinite(x0)) or not np.all(np.isfinite(xf)):
-            raise ValueError(
-                "x0 and xf must contain only finite values"
-            )
+        if (
+            not np.all(np.isfinite(x0))
+            or not np.all(np.isfinite(xf))
+        ):
+            raise ValueError("x0 and xf must contain only finite values")
 
-        return pd.DataFrame(
+        X_resolved = pd.DataFrame(
             [x0.to_numpy(), xf.to_numpy()],
             columns=x0.index,
         )
 
-    raise TypeError(
-        "x0 and xf must both be NumPy arrays, both be pandas Series, "
-        "or both be Niimg-like objects"
-    )
+        return X_resolved, "tabular_like"
+
+    # Resolve NumPy/list/tuple endpoints.
+    x0_array = np.asarray(x0)
+    xf_array = np.asarray(xf)
+
+    if x0_array.ndim != 1 or xf_array.ndim != 1:
+        raise ValueError("x0 and xf must be one-dimensional states")
+
+    if x0_array.shape != xf_array.shape:
+        raise ValueError("x0 and xf must contain the same number of nodes")
+
+    if x0_array.dtype != xf_array.dtype:
+        raise TypeError("x0 and xf must have the same dtype")
+
+    if (
+        not np.all(np.isfinite(x0_array))
+        or not np.all(np.isfinite(xf_array))
+    ):
+        raise ValueError(
+            "x0 and xf must contain only finite values"
+        )
+
+    X_resolved = np.stack((x0_array, xf_array))
+
+    return X_resolved, "tabular_like"
     
 def _validate_transition_order(n_states, order):
     """Validate that the requested transition order is possible."""

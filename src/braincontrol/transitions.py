@@ -15,7 +15,6 @@ from braincontrol.utils.io import (
     _state_transition_index,
 )
 from braincontrol.utils.validation import (
-    _is_niimg_or_tabular_like,
     _resolve_array_or_identity,
     _resolve_state_input,
     _validate_square_matrix,
@@ -270,6 +269,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         _validate_square_matrix_or_identity(B,"B")
     
         # validate energy-specific parameters rho and S
+        # FIXME: Should also be put in a separate function validate_energy_type_rho_and_S?
         if energy_type == "minimal":
             
             if rho is not None or S is not None:
@@ -329,7 +329,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             "c": c,
             "n_nodes": n_nodes,
         }
-        
+    
+    # TODO: In terms of readability it would be nice if this would return the fitted
+    # masker which could then be set in fit states as self.masker_ = masker_fitted
     def _fit_masker(self, X):
         """Clone, fit, and validate the masker for image-like state input."""
         if self.masker is None:
@@ -341,7 +343,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         self.masker_ = clone(self.masker)
         self.masker_.fit(X)
     
-        required_attributes = ("n_elements_", "lut_")
+        required_attributes = ("n_elements_","lut_",)
         missing_attributes = [
             attribute
             for attribute in required_attributes
@@ -353,58 +355,76 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 "masker must expose the fitted attributes "
                 f"{', '.join(required_attributes)}"
             )
-
-    def _fit_states(self,X,x0,xf,node_labels):
-        """Resolve state input and fit state-related metadata.
     
-        Determine the number of states and nodes, fit the masker when required,
-        and validate node and state labels against the resolved state input.
-        
-        node_labels : list-like or MultiIndex-like, optional
-            Labels for nodes. When supplied, :meth:`transform` returns a DataFrame
-            whose columns preserve these labels. If omitted labels are inferred from input.
-        
-        """
-        
-        # resolve state input, which will return either pandas dataframe or 4D-image
-        self.X_ = _resolve_state_input(X=X,x0=x0,xf=xf) # TODO: Do we even want to store this?
-        self.X_type_ = _is_niimg_or_tabular_like(self.X_)
-
-        if self.X_type_ == "tabular_like":
+    def _fit_states(
+        self,
+        X,
+        x0,
+        xf,
+        node_labels,
+    ):
+        """Resolve state input and fit state-related metadata."""
+        X_resolved, X_type = _resolve_state_input(X=X,x0=x0,xf=xf)
+    
+        if X_type == "tabular_like":
             
             self.masker_ = None
-            self.n_states_in_ = self.X_.shape[0]
-            self.n_state_nodes_ = self.X_.shape[1]
-            node_labels_inferred = self.X_.columns
     
-        elif self.X_type_ == "niimg_like":
-            
-            self._fit_masker(self.X_)
-            self.n_state_nodes_ = self.masker_.n_elements_
-            self.n_states_in_ = self.X_.shape[3]
-
+            n_states = X_resolved.shape[0]
+            n_state_nodes = X_resolved.shape[1]
+    
+            if isinstance(X_resolved, pd.DataFrame):
+                node_labels_inferred = X_resolved.columns
+            else:
+                node_labels_inferred = None
+    
+        elif X_type == "niimg_like":
+            self._fit_masker(
+                X_resolved,
+            )
+    
+            n_states = X_resolved.shape[3]
+            n_state_nodes = self.masker_.n_elements_
+    
             lut = self.masker_.lut_
             lut = lut.loc[lut["index"] != self.masker_.background_label].reset_index(drop=True)
-            node_labels_inferred = pd.MultiIndex.from_frame(lut)
-        
-        # set sklearn-standard alias
-        self.n_features_in_ = self.n_state_nodes_
-        
-        # the number of nodes in the states must always match the number of nodes from 
-        # the adjacency matrix
-        if self.n_state_nodes_ != self.n_nodes_:
+    
+            node_labels_inferred = pd.MultiIndex.from_frame(
+                lut
+            )
+    
+        # State nodes must match adjacency nodes.
+        if n_state_nodes != self.n_nodes_:
             raise ValueError(
                 "State input must have the same number of nodes as A; "
-                f"got {self.n_state_nodes_} nodes for "
+                f"got {n_state_nodes} nodes for "
                 f"{self.n_nodes_} nodes in A"
             )
-        
-        # if user has provided separate node labels then overwrite the inferred ones
-        node_labels = node_labels if node_labels is not None else node_labels_inferred
     
-        # make sure that node labels are always convertable to index and have 
-        # the expected length
-        self.node_labels_ = None if node_labels is None else _coerce_labels(node_labels,self.n_state_nodes_,"node_labels")
+        # Explicit node labels override inferred labels.
+        if node_labels is not None:
+            node_labels_fitted = _coerce_labels(
+                node_labels,
+                n_state_nodes,
+                "node_labels",
+            )
+    
+        elif node_labels_inferred is not None:
+            node_labels_fitted = _coerce_labels(
+                node_labels_inferred,
+                n_state_nodes,
+                "node_labels",
+            )
+    
+        else:
+            node_labels_fitted = None
+    
+        # Store fitted state metadata.
+        self.X_type_ = X_type
+        self.n_states_in_ = n_states
+        self.n_state_nodes_ = n_state_nodes
+        self.n_features_in_ = n_state_nodes
+        self.node_labels_ = node_labels_fitted
         
     # TODO: Is it true that xr can be also array like?
     def fit(self, X=None,y=None,*,x0=None,xf=None,node_labels=None):
@@ -480,11 +500,8 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         )
     
         # Resolve transform input into a consistent representation.
-        X_resolved = _resolve_state_input(X=X,x0=x0,xf=xf)
-    
-        # Input type must match what was seen during fit.
-        X_type = _is_niimg_or_tabular_like(X_resolved)
-    
+        X_resolved, X_type = _resolve_state_input(X=X,x0=x0,xf=xf)
+        
         if X_type != self.X_type_:
             raise TypeError(
                 "State input type must match the type used during fit; "
