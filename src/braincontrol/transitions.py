@@ -10,6 +10,7 @@ import pandas as pd
 from .utils.io import _set_transition_order
 from .utils.io import _coerce_labels
 from .utils.io import _state_transition_index
+from .utils.io import _get_trajectory_array
 from .utils.validation import _resolve_array_or_identity
 from .utils.validation import _resolve_state_input
 from .utils.validation import _validate_same_shape
@@ -207,7 +208,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         memory=None,
         memory_level=1,
         verbose=0,
-
         store_state_trajectories=False,
         store_control_trajectories=False,
     ):
@@ -494,8 +494,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         # make sure that state labels are always convertable to index and have the expected length
         state_labels = None if state_labels is None else _coerce_labels(state_labels,n_states,"state_labels")
         
-        # compute transition labels
+        # compute transition labels and store them
         transition_labels = None if state_labels is None else _state_transition_index(state_labels,order)
+        self.transition_labels_ = transition_labels
 
         # Return df that has either both columns and index, only columns, only index, no columns and no index
         df_transition_energy = pd.DataFrame(transition_energy,index=transition_labels,columns=self.node_labels_)
@@ -533,21 +534,22 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         check_is_fitted(self, attributes=["errors_"])
         return self.errors_.copy()
 
-    # TODO: Should be split up into .get_state_trajectories and .get_control_trajectories
-    # TODO: Should also output pandas dataframes with shape (time,nodes,transition)
-    def get_transition_arrays(self):
-        """Return retained trajectory arrays, or ``None`` when disabled."""
+    def get_state_trajectories(self):
+        """Return retained state trajectories as a labelled xarray DataArray."""
+        return _get_trajectory_array(
+            getattr(self, "state_trajectories_", None),
+            node_labels=self.node_labels_,
+            transition_labels=self.transition_labels_,
+            name="state_trajectories",
+        )
 
-        state_trajectories = getattr(self, "state_trajectories_", None)
-        control_trajectories = getattr(self, "control_trajectories_", None)
-        
-        return (
-            None if state_trajectories is None else state_trajectories.copy(),
-            (
-                None
-                if control_trajectories is None
-                else control_trajectories.copy()
-            ),
+    def get_control_trajectories(self):
+        """Return retained control trajectories as a labelled xarray DataArray."""
+        return _get_trajectory_array(
+            getattr(self, "control_trajectories_", None),
+            node_labels=self.node_labels_,
+            transition_labels=self.transition_labels_,
+            name="control_trajectory",
         )
 
     def get_feature_names_out(self, input_features=None):
