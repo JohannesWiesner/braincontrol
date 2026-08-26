@@ -123,25 +123,12 @@ def get_transition_trajectories(
 def get_transition_energy(control_trajectories):
     """Integrate squared control trajectories for every transition."""
     
-    # FIXME: This function should not validate input. If this has to be
-    # validated it should be done somehwere else.
-    control_trajectories = np.asarray(control_trajectories, dtype=float)
-    if control_trajectories.ndim != 3:
-        raise ValueError(
-            "control_trajectories must have shape "
-            "(n_time_points, n_nodes, n_transitions)"
-        )
-    if not np.all(np.isfinite(control_trajectories)):
-        raise ValueError(
-            "control_trajectories must contain only finite values"
-        )
-
     n_nodes, n_transitions = control_trajectories.shape[1:]
     energies = np.empty((n_transitions, n_nodes))
+    
     for transition in range(n_transitions):
-        energies[transition] = integrate_u(
-            control_trajectories[:, :, transition]
-        )
+        energies[transition] = integrate_u(control_trajectories[:, :, transition])
+        
     return energies
 
 ###############################################################################
