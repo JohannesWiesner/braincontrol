@@ -353,7 +353,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 "T must be a float for a continuous system"
             )
     
-        # Resolve matrices.
+        # Resolve matrices. Everything is checked against A from here on
         A = np.asarray(A)
         n_nodes = A.shape[0]
     
@@ -445,13 +445,13 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             
             self.masker_ = None
             self.n_states_in_ = self.X_.shape[0]
-            self.n_nodes_in_ = self.X_.shape[1]
+            self.n_state_nodes_ = self.X_.shape[1]
             node_labels_inferred = self.X_.columns
     
         elif self.X_type_ == "niimg_like":
             
             self._fit_masker(self.X_)
-            self.n_nodes_in_ = self.masker_.n_elements_
+            self.n_state_nodes_ = self.masker_.n_elements_
             self.n_states_in_ = self.X_.shape[3]
 
             lut = self.masker_.lut_
@@ -459,14 +459,14 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             node_labels_inferred = pd.MultiIndex.from_frame(lut)
         
         # set sklearn-standard alias
-        self.n_features_in_ = self.n_nodes_in_
+        self.n_features_in_ = self.n_state_nodes_
         
         # the number of nodes in the states must always match the number of nodes from 
         # the adjacency matrix
-        if self.n_nodes_in_ != self.n_nodes_:
+        if self.n_state_nodes_ != self.n_nodes_:
             raise ValueError(
                 "State input must have the same number of nodes as A; "
-                f"got {self.n_nodes_in_} nodes for "
+                f"got {self.n_state_nodes_} nodes for "
                 f"{self.n_nodes_} nodes in A"
             )
         
@@ -475,7 +475,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     
         # make sure that node labels are always convertable to index and have 
         # the expected length
-        self.node_labels_ = None if node_labels is None else _coerce_labels(node_labels,self.n_nodes_in_,"node_labels")
+        self.node_labels_ = None if node_labels is None else _coerce_labels(node_labels,self.n_state_nodes_,"node_labels")
         
     # TODO: Is it true that xr can be also array like?
     def fit(self, X=None,y=None,*,x0=None,xf=None,node_labels=None):
@@ -568,10 +568,10 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         order = _validate_transition_order(n_states, order)
     
         # number of nodes must match what was seen during fit.
-        if X.shape[1] != self.n_nodes_in_:
+        if X.shape[1] != self.n_state_nodes_:
             raise ValueError(
                 "State input must contain the same number of nodes as seen "
-                f"during fit; expected {self.n_nodes_in_}, "
+                f"during fit; expected {self.n_state_nodes_}, "
                 f"got {X.shape[1]}"
             )
         

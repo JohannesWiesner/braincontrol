@@ -14,7 +14,7 @@ from typing import get_args
 from nilearn.nilearn_typing import NiimgLike
 
 ###############################################################################
-## Validation of Network Control Theory parameters
+## Validation helpers for Network Control Theory parameters
 ###############################################################################
 
 def _validate_2d_matrix_and_finite(value, name):
@@ -116,7 +116,7 @@ def _validate_adjacency_inputs(A, normalize_A, c):
     return A, normalize_A, c
 
 ###############################################################################
-## Validation of states
+## Validation helpers to check state input(s)
 ###############################################################################
 
 def _is_niimg_or_tabular_like(value):
