@@ -18,38 +18,52 @@ from nilearn.nilearn_typing import NiimgLike
 ###############################################################################
 
 def _validate_2d_matrix_and_finite(value, name):
-    """Validate that input is two-dimensional matrix and contains only finite values."""
+    """Validate that input is two-dimensional and contains only finite values."""
     array = np.asarray(value)
 
     if array.ndim != 2:
-        raise ValueError(f"{name} must be two-dimensional")
-
-    if not np.all(np.isfinite(array)):
-        raise ValueError(f"{name} must contain only finite values")
-
-def _validate_square_matrix_or_identity(value, name):
-    """Validate that input is a finite square array-like object or 'identity'."""
-    if isinstance(value, str):
-        if value != "identity":
-            raise ValueError(
-                f"{name} must be a square array-like object or 'identity'"
-            )
-        return
-
-    if not isinstance(value, (np.ndarray, pd.DataFrame)):
-        raise TypeError(
-            f"{name} must be a NumPy array, pandas DataFrame, or 'identity'"
+        raise ValueError(
+            f"{name} must be two-dimensional"
         )
 
-    _validate_2d_matrix_and_finite(value, name)
+    if not np.all(np.isfinite(array)):
+        raise ValueError(
+            f"{name} must contain only finite values"
+        )
+
+def _validate_square_matrix(value, name):
+    """Validate that input is a finite square NumPy array or DataFrame."""
+    if not isinstance(value, (np.ndarray, pd.DataFrame)):
+        raise TypeError(
+            f"{name} must be a NumPy array or pandas DataFrame"
+        )
+
+    _validate_2d_matrix_and_finite(
+        value,
+        name,
+    )
 
     if value.shape[0] != value.shape[1]:
         raise ValueError(
             f"{name} must be square; got shape {value.shape}"
         )
 
+def _validate_square_matrix_or_identity(value, name):
+    """Validate a finite square matrix or the string ``'identity'``."""
+    if isinstance(value, str):
+        if value != "identity":
+            raise ValueError(
+                f"{name} must be a square matrix or 'identity'"
+            )
+        return
+
+    _validate_square_matrix(
+        value,
+        name,
+    )
+
 def _resolve_array_or_identity(value, n_nodes):
-    """Return the input array-like object as numpy array or as an identity matrix of size n_nodes."""
+    """Resolve a prevalidated matrix or ``'identity'`` to a NumPy array."""
     if isinstance(value, str):
         return np.eye(n_nodes)
 
@@ -57,63 +71,98 @@ def _resolve_array_or_identity(value, n_nodes):
 
 def _validate_same_shape(arrays, names):
     """Validate that all arrays have the same shape."""
-    shapes = {array.shape for array in arrays}
+    shapes = {
+        array.shape
+        for array in arrays
+    }
 
     if len(shapes) != 1:
         formatted_shapes = ", ".join(
             f"{name}: {array.shape}"
             for name, array in zip(names, arrays)
         )
+
         raise ValueError(
             f"{', '.join(names)} must have the same shape; "
             f"got {formatted_shapes}"
         )
 
 def _validate_choice(value, name, choices):
-    """Validate an enumerated option and return it unchanged."""
+    """Validate an enumerated option."""
     if value not in choices:
-        formatted_choices = ", ".join(repr(choice) for choice in choices)
-        raise ValueError(
-            f"{name} must be one of {formatted_choices}; got {value!r}"
+        formatted_choices = ", ".join(
+            repr(choice)
+            for choice in choices
         )
-    return value
+
+        raise ValueError(
+            f"{name} must be one of {formatted_choices}; "
+            f"got {value!r}"
+        )
 
 def _validate_boolean(value, name):
-    """Validate and return a boolean option."""
+    """Validate a boolean option."""
     if not isinstance(value, (bool, np.bool_)):
-        raise TypeError(f"{name} must be a boolean")
-    return bool(value)
-
-def _validate_adjacency_inputs(A, normalize_A, c):
-    """Validate adjacency matrix and normalization parameters.
-    ``A`` must be two-dimensional, square, and contain only finite values.
-    ``normalize_A`` must be boolean.
-    ``c`` must be a positive finite real number.
-    """
-    if not isinstance(A, (np.ndarray, pd.DataFrame)):
         raise TypeError(
-            "A must be a NumPy array or pandas DataFrame"
-        )
-        
-    _validate_2d_matrix_and_finite(A, "A")
-
-    if A.shape[0] != A.shape[1]:
-        raise ValueError(
-            f"A must be square; got shape {A.shape}"
+            f"{name} must be a boolean"
         )
 
-    _validate_boolean(normalize_A, "normalize_A")
-
+def _validate_positive_real(value, name):
+    """Validate that input is a positive finite real number."""
     if (
-        isinstance(c, (bool, np.bool_))
-        or not isinstance(c, (int, float, np.integer, np.floating))
+        isinstance(value, (bool, np.bool_))
+        or not isinstance(
+            value,
+            (int, float, np.integer, np.floating),
+        )
     ):
-        raise TypeError("c must be a real number")
+        raise TypeError(
+            f"{name} must be a real number"
+        )
 
-    if not np.isfinite(c) or c <= 0:
-        raise ValueError("c must be a positive finite number")
-        
-    return A, normalize_A, c
+    if not np.isfinite(value) or value <= 0:
+        raise ValueError(
+            f"{name} must be a positive finite number"
+        )
+
+def _validate_rho(rho):
+    """Validate the mixing parameter for optimal control."""
+    if (
+        isinstance(rho, (bool, np.bool_))
+        or not isinstance(rho, (float, np.floating))
+    ):
+        raise TypeError(
+            "rho must be a float"
+        )
+
+    if not np.isfinite(rho) or not 0 < rho <= 1:
+        raise ValueError(
+            "rho must be a positive finite float between 0 and 1"
+        )
+
+def _validate_time_horizon(T, system):
+    """Validate the control time horizon for the selected system."""
+    if isinstance(T, (bool, np.bool_)) or not np.isscalar(T):
+        raise TypeError(
+            "T must be a scalar number"
+        )
+
+    if not np.isfinite(T) or T <= 0:
+        raise ValueError(
+            "T must be a positive finite number"
+        )
+
+    if system == "discrete":
+        if not isinstance(T, (int, np.integer)) or T < 2:
+            raise ValueError(
+                "T must be an integer of at least 2 "
+                "for a discrete system"
+            )
+
+    elif not isinstance(T, (float, np.floating)):
+        raise TypeError(
+            "T must be a float for a continuous system"
+        )
 
 ###############################################################################
 ## Validation helpers to check state input(s)
