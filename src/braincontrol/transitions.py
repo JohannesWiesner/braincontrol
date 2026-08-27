@@ -15,14 +15,16 @@ from braincontrol.utils.io import (
     _state_transition_index,
 )
 from braincontrol.utils.validation import (
-    _is_niimg_or_tabular_like,
     _resolve_array_or_identity,
     _resolve_state_input,
-    _validate_adjacency_inputs,
+    _validate_square_matrix,
+    _validate_positive_real,
     _validate_boolean,
     _validate_choice,
+    _validate_rho,
     _validate_same_shape,
     _validate_square_matrix_or_identity,
+    _validate_time_horizon,
     _validate_transition_order,
 )
 
@@ -123,25 +125,12 @@ def get_transition_trajectories(
 def get_transition_energy(control_trajectories):
     """Integrate squared control trajectories for every transition."""
     
-    # FIXME: This function should not validate input. If this has to be
-    # validated it should be done somehwere else.
-    control_trajectories = np.asarray(control_trajectories, dtype=float)
-    if control_trajectories.ndim != 3:
-        raise ValueError(
-            "control_trajectories must have shape "
-            "(n_time_points, n_nodes, n_transitions)"
-        )
-    if not np.all(np.isfinite(control_trajectories)):
-        raise ValueError(
-            "control_trajectories must contain only finite values"
-        )
-
     n_nodes, n_transitions = control_trajectories.shape[1:]
     energies = np.empty((n_transitions, n_nodes))
+    
     for transition in range(n_transitions):
-        energies[transition] = integrate_u(
-            control_trajectories[:, :, transition]
-        )
+        energies[transition] = integrate_u(control_trajectories[:, :, transition])
+        
     return energies
 
 ###############################################################################
@@ -248,7 +237,8 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         self.store_state_trajectories = store_state_trajectories
         self.store_control_trajectories = store_control_trajectories
     
-    def _fit_nct_parameters(self,
+    def _fit_nct_parameters(
+        self,
         A,
         T,
         B,
@@ -261,129 +251,68 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         normalize_A,
         c,
     ):
-        """Validate and resolve Network Control Theory parameters"""
+        """Validate and resolve Network Control Theory parameters."""
         
-        energy_type = _validate_choice(
-            energy_type,
-            "energy_type",
-            ("minimal", "optimal"),
-        )
+        # validate categorical parameters
+        # FIXME: xr can also be a vector!
+        _validate_choice(energy_type,"energy_type",("minimal", "optimal"))
+        _validate_choice(system,"system",("continuous", "discrete"))
+        _validate_choice(xr,"xr",("x0", "xf", "zero", "midpoint"),)
+        _validate_choice(expm_version,"expm_version",("scipy", "eig"))
     
-        system = _validate_choice(
-            system,
-            "system",
-            ("continuous", "discrete"),
-        )
+        # validate adjacency matrix and normalization parameters
+        _validate_square_matrix(A,"A")
+        _validate_boolean(normalize_A,"normalize_A")
+        _validate_positive_real(c,"c")
+
+        # validate control input matrix
+        _validate_square_matrix_or_identity(B,"B")
     
-        xr = _validate_choice(
-            xr,
-            "xr",
-            ("x0", "xf", "zero", "midpoint"),
-        )
-    
-        expm_version = _validate_choice(
-            expm_version,
-            "expm_version",
-            ("scipy", "eig"),
-        )
-    
-        _validate_adjacency_inputs(
-            A,
-            normalize_A,
-            c,
-        )
-    
-        _validate_square_matrix_or_identity(
-            B,
-            "B",
-        )
-    
+        # validate energy-specific parameters rho and S
+        # FIXME: Should also be put in a separate function validate_energy_type_rho_and_S?
         if energy_type == "minimal":
+            
             if rho is not None or S is not None:
                 raise ValueError(
-                    "rho and S must both be None when "
-                    "energy_type='minimal'"
+                    "rho and S must both be None when energy_type='minimal'"
                 )
     
+            # nctpy requires a positive rho internally even when S is zero.
             rho = 1.0
     
-        else:
+        elif energy_type == 'optimal':
+            
             if rho is None or S is None:
                 raise ValueError(
-                    "rho and S must both be provided when "
-                    "energy_type='optimal'"
+                    "rho and S must both be provided when energy_type='optimal'"
                 )
     
-            if (
-                isinstance(rho, (bool, np.bool_))
-                or not isinstance(rho, (float, np.floating))
-                or not np.isfinite(rho)
-                or rho <= 0.0
-                or rho > 1.0
-            ):
-                raise ValueError(
-                    "rho must be a positive finite float between 0 and 1 when "
-                    "energy_type='optimal"
-                )
+            _validate_rho(rho)
+            _validate_square_matrix_or_identity(S,"S")
     
-            _validate_square_matrix_or_identity(
-                S,
-                "S",
-            )
+        # validate time horizon
+        _validate_time_horizon(T,system)
     
-        if isinstance(T, (bool, np.bool_)) or not np.isscalar(T):
-            raise TypeError(
-                "T must be a scalar number"
-            )
-    
-        if not np.isfinite(T) or T <= 0:
-            raise ValueError(
-                "T must be a positive finite number"
-            )
-    
-        if system == "discrete":
-            if not isinstance(T, (int, np.integer)) or T < 2:
-                raise ValueError(
-                    "T must be an integer of at least 2 "
-                    "for a discrete system"
-                )
-    
-        elif not isinstance(T, (float, np.floating)):
-            raise TypeError(
-                "T must be a float for a continuous system"
-            )
-    
-        # Resolve matrices.
+        # resolve matrix A        
         A = np.asarray(A)
         n_nodes = A.shape[0]
-    
-        A_norm = (
-            A.copy()
-            if not normalize_A
-            else matrix_normalization(
-                A,
-                system,
-                c,
-            )
-        )
-    
-        B = _resolve_array_or_identity(
-            B,
-            n_nodes,
-        )
-    
+        
+        if normalize_A:
+            A_norm = matrix_normalization(A,system,c)
+        else:
+            A_norm = A.copy()
+            
+        # resolve matrix B
+        B = _resolve_array_or_identity(B,n_nodes)
+        
+        # resolve matrix S
         if energy_type == "minimal":
             S = np.zeros_like(A)
         else:
-            S = _resolve_array_or_identity(
-                S,
-                n_nodes,
-            )
+            S = _resolve_array_or_identity(S,n_nodes)
     
-        _validate_same_shape(
-            [A, B, S],
-            ["A", "B", "S"],
-        )
+        # all matrices must have the same shape
+        _validate_same_shape([A, B, S],["A", "B", "S"])
     
         return {
             "A": A,
@@ -400,7 +329,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             "c": c,
             "n_nodes": n_nodes,
         }
-        
+    
+    # TODO: In terms of readability it would be nice if this would return the fitted
+    # masker which could then be set in fit states as self.masker_ = masker_fitted
     def _fit_masker(self, X):
         """Clone, fit, and validate the masker for image-like state input."""
         if self.masker is None:
@@ -412,7 +343,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         self.masker_ = clone(self.masker)
         self.masker_.fit(X)
     
-        required_attributes = ("n_elements_", "lut_")
+        required_attributes = ("n_elements_","lut_",)
         missing_attributes = [
             attribute
             for attribute in required_attributes
@@ -424,58 +355,78 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 "masker must expose the fitted attributes "
                 f"{', '.join(required_attributes)}"
             )
-
-    def _fit_states(self,X,x0,xf,node_labels):
-        """Resolve state input and fit state-related metadata.
     
-        Determine the number of states and nodes, fit the masker when required,
-        and validate node and state labels against the resolved state input.
-        
-        node_labels : list-like or MultiIndex-like, optional
-            Labels for nodes. When supplied, :meth:`transform` returns a DataFrame
-            whose columns preserve these labels. If omitted labels are inferred from input.
-        
-        """
-        
-        # resolve state input, which will return either pandas dataframe or 4D-image
-        self.X_ = _resolve_state_input(X=X,x0=x0,xf=xf)
-        self.X_type_ = _is_niimg_or_tabular_like(self.X_)
-
-        if self.X_type_ == "tabular_like":
+    # FIXME: Still don't like this in terms of readability. How
+    # about _resolve_state_input also outputs node_labels?
+    def _fit_states(
+        self,
+        X,
+        x0,
+        xf,
+        node_labels,
+    ):
+        """Resolve state input and fit state-related metadata."""
+        X_resolved, X_type = _resolve_state_input(X=X,x0=x0,xf=xf)
+    
+        if X_type == "tabular_like":
             
             self.masker_ = None
-            self.n_states_in_ = self.X_.shape[0]
-            self.n_nodes_in_ = self.X_.shape[1]
-            node_labels_inferred = self.X_.columns
     
-        elif self.X_type_ == "niimg_like":
-            
-            self._fit_masker(self.X_)
-            self.n_nodes_in_ = self.masker_.n_elements_
-            self.n_states_in_ = self.X_.shape[3]
-
+            n_states = X_resolved.shape[0]
+            n_state_nodes = X_resolved.shape[1]
+    
+            if isinstance(X_resolved, pd.DataFrame):
+                node_labels_inferred = X_resolved.columns
+            else:
+                node_labels_inferred = None
+    
+        elif X_type == "niimg_like":
+            self._fit_masker(
+                X_resolved,
+            )
+    
+            n_states = X_resolved.shape[3]
+            n_state_nodes = self.masker_.n_elements_
+    
             lut = self.masker_.lut_
             lut = lut.loc[lut["index"] != self.masker_.background_label].reset_index(drop=True)
-            node_labels_inferred = pd.MultiIndex.from_frame(lut)
-        
-        # set sklearn-standard alias
-        self.n_features_in_ = self.n_nodes_in_
-        
-        # the number of nodes in the states must always match the number of nodes from 
-        # the adjacency matrix
-        if self.n_nodes_in_ != self.n_nodes_:
+    
+            node_labels_inferred = pd.MultiIndex.from_frame(
+                lut
+            )
+    
+        # State nodes must match adjacency nodes.
+        if n_state_nodes != self.n_nodes_:
             raise ValueError(
                 "State input must have the same number of nodes as A; "
-                f"got {self.n_nodes_in_} nodes for "
+                f"got {n_state_nodes} nodes for "
                 f"{self.n_nodes_} nodes in A"
             )
-        
-        # if user has provided separate node labels then overwrite the inferred ones
-        node_labels = node_labels if node_labels is not None else node_labels_inferred
     
-        # make sure that node labels are always convertable to index and have 
-        # the expected length
-        self.node_labels_ = None if node_labels is None else _coerce_labels(node_labels,self.n_nodes_in_,"node_labels")
+        # Explicit node labels override inferred labels.
+        if node_labels is not None:
+            node_labels_fitted = _coerce_labels(
+                node_labels,
+                n_state_nodes,
+                "node_labels",
+            )
+    
+        elif node_labels_inferred is not None:
+            node_labels_fitted = _coerce_labels(
+                node_labels_inferred,
+                n_state_nodes,
+                "node_labels",
+            )
+    
+        else:
+            node_labels_fitted = None
+    
+        # Store fitted state metadata.
+        self.X_type_ = X_type
+        self.n_states_in_ = n_states
+        self.n_state_nodes_ = n_state_nodes
+        self.n_features_in_ = n_state_nodes
+        self.node_labels_ = node_labels_fitted
         
     # TODO: Is it true that xr can be also array like?
     def fit(self, X=None,y=None,*,x0=None,xf=None,node_labels=None):
@@ -483,7 +434,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         
         self._fit_cache()
         
-        # validate all inputs used to compute transitions
+        # validate all nctpy inputs used to compute transitions
         nct_parameters = self._fit_nct_parameters(
             self.A,
             self.T,
@@ -498,16 +449,19 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             self.c,
         )
         
-        for name, value in nct_parameters.items():
-            setattr(self, f"{name}_", value)
+        for attr,value in nct_parameters.items():
+            setattr(self,f"{attr}_",value)
+            
+        # validate boolean options
+        _validate_boolean(self.store_state_trajectories, "store_state_trajectories")
+        self.store_state_trajectories_ = self.store_state_trajectories
+        
+        _validate_boolean(self.store_control_trajectories,"store_control_trajectories")
+        self.store_control_trajectories_ = self.store_control_trajectories
 
         # validate and fit state input. Sets X_
         self._fit_states(X,x0,xf,node_labels)
-        
-        # validate boolean options
-        self.store_state_trajectories_ = _validate_boolean(self.store_state_trajectories, "store_state_trajectories")
-        self.store_control_trajectories_ = _validate_boolean(self.store_control_trajectories,"store_control_trajectories")
-        
+
         # FIXME: What should .fit() return?
         return self
 
@@ -533,6 +487,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             """
 
         # check that all needed inputs exist
+        # FIXME: Check this (some can be dropped others have to be added?)
         check_is_fitted(
             self,
             attributes=[
@@ -541,18 +496,14 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 "S_",
                 "rho_",
                 "X_type_",
-                "n_nodes_in_",
+                "n_state_nodes_",
                 "node_labels_",
             ],
         )
     
-
         # Resolve transform input into a consistent representation.
-        X_resolved = _resolve_state_input(X=X,x0=x0,xf=xf)
-    
-        # Input type must match what was seen during fit.
-        X_type = _is_niimg_or_tabular_like(X_resolved)
-    
+        X_resolved, X_type = _resolve_state_input(X=X,x0=x0,xf=xf)
+        
         if X_type != self.X_type_:
             raise TypeError(
                 "State input type must match the type used during fit; "
@@ -568,10 +519,10 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         order = _validate_transition_order(n_states, order)
     
         # number of nodes must match what was seen during fit.
-        if X.shape[1] != self.n_nodes_in_:
+        if X.shape[1] != self.n_state_nodes_:
             raise ValueError(
                 "State input must contain the same number of nodes as seen "
-                f"during fit; expected {self.n_nodes_in_}, "
+                f"during fit; expected {self.n_state_nodes_}, "
                 f"got {X.shape[1]}"
             )
         

@@ -26,12 +26,6 @@ def _set_transition_order(n_states, order):
     if n_states < 1:
         raise ValueError("n_states must be at least 1")
         
-    order = _validate_choice(
-        order,
-        "order",
-        ("combinations", "permutations", "product", "stability"),
-    )
-
     indices = range(n_states)
     
     if order == "permutations":
