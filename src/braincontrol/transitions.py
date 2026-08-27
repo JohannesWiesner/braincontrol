@@ -21,7 +21,6 @@ from braincontrol.utils.validation import (
     _validate_positive_real,
     _validate_boolean,
     _validate_choice,
-    _validate_rho,
     _validate_same_shape,
     _validate_square_matrix_or_identity,
     _validate_time_horizon,
@@ -331,7 +330,8 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             )
     
     # FIXME: Still don't like this in terms of readability. How
-    # about _resolve_state_input also outputs node_labels?
+    # about _resolve_state_input also outputs node_labels, i.e. if the 
+    # state input is dataframe like then just infer from the columns?
     def _fit_states(
         self,
         X,
