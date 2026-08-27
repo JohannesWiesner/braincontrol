@@ -476,7 +476,8 @@ def _resolve_state_input(X=None, x0=None, xf=None):
     X_resolved = np.stack((x0_array, xf_array))
 
     return X_resolved, "tabular_like"
-    
+
+# FIXME: _validate functions should never return anything
 def _validate_transition_order(n_states, order):
     """Validate that the requested transition order is possible."""
     order = _validate_choice(

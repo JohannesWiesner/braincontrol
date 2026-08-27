@@ -14,6 +14,7 @@ from braincontrol.utils.io import (
     _set_transition_order,
     _state_transition_index,
 )
+
 from braincontrol.utils.validation import (
     _resolve_array_or_identity,
     _resolve_state_input,
@@ -288,23 +289,24 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         _validate_same_shape([A, B, S],["A", "B", "S"])
     
         return {
-            "A": A,
-            "A_norm": A_norm,
-            "B": B,
-            "S": S,
-            "T": T,
-            "rho": rho,
-            "energy_type": energy_type,
-            "system": system,
-            "xr": xr,
-            "expm_version": expm_version,
-            "normalize_A": normalize_A,
-            "c": c,
-            "n_nodes": n_nodes,
+            "A_": A,
+            "A_norm_": A_norm,
+            "B_": B,
+            "S_": S,
+            "T_": T,
+            "rho_": rho,
+            "energy_type_": energy_type,
+            "system_": system,
+            "xr_": xr,
+            "expm_version_": expm_version,
+            "normalize_A_": normalize_A,
+            "c_": c,
+            "n_nodes_": n_nodes,
         }
     
     def _fit_masker(self, X):
         """Clone and fit the masker for Niimg-like state input."""
+        
         if self.masker is None:
             raise ValueError(
                 "Image-like state input requires a masker, for example "
@@ -341,6 +343,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         node_labels,
     ):
         """Resolve state input and fit state-related metadata."""
+        
         X_resolved, X_type = _resolve_state_input(X=X,x0=x0,xf=xf)
     
         if X_type == "tabular_like":
@@ -420,9 +423,8 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             self.c,
         )
         
-        # FIXME: How about the dictionary already returns _attr?
-        for attr,value in nct_parameters.items():
-            setattr(self,f"{attr}_",value)
+        for attr_,value in nct_parameters.items():
+            setattr(self,f"{attr_}",value)
             
         # validate boolean options
         _validate_boolean(self.store_state_trajectories, "store_state_trajectories")
@@ -439,6 +441,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
 
     def _transform_states(self,X):
         """Return states as a 2D NumPy array suitable for transition computation."""
+        
         if self.X_type_ == "tabular_like":
             return X.to_numpy()
     
@@ -564,6 +567,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         order="permutations",
     ):
         """Fit and transform states supplied as ``X`` or as ``x0`` and ``xf``."""
+        
         return self.fit(
             X,
             y,
@@ -580,11 +584,13 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             
     def get_errors(self):
         """Return numerical errors from the most recent transform call."""
+        
         check_is_fitted(self, attributes=["errors_"])
         return self.errors_.copy()
 
     def get_state_trajectories(self):
         """Return retained state trajectories as a labelled xarray DataArray."""
+        
         return _get_trajectory_array(
                     getattr(self, "state_trajectories_", None),
                     node_labels=self.node_labels_,
@@ -594,6 +600,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
 
     def get_control_trajectories(self):
         """Return retained control trajectories as a labelled xarray DataArray."""
+        
         return _get_trajectory_array(
                     getattr(self, "control_trajectories_", None),
                     node_labels=self.node_labels_,
@@ -603,6 +610,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
 
     def get_feature_names_out(self, input_features=None):
         """Return names for the node-level energy columns."""
+        
         check_is_fitted(self, attributes=["n_features_in_"])
         if input_features is not None:
             names = _coerce_labels(input_features, self.n_features_in_, "input_features")
