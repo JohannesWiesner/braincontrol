@@ -142,6 +142,31 @@ a zero matrix.
 Mixing `energy_type="minimal"` with a non-`None` `rho` or `S` raises a
 `ValueError`. Conversely, optimal energy requires both parameters.
 
+### Reference state
+
+The trajectory reference state `xr` can be `"zero"`, `"x0"`, `"xf"`, or
+`"midpoint"`. It can also be a NumPy vector with one value per network node:
+
+```python
+transitioner = Transitioner(
+    A=adjacency,
+    T=1,
+    xr=reference_state[:, None],
+)
+```
+
+A 3D niimg-like reference can be supplied when a compatible masker is
+configured. It is masked to an `(n_nodes, 1)` vector during `fit`:
+
+```python
+transitioner = Transitioner(
+    A=adjacency,
+    T=1,
+    xr=reference_image,
+    masker=masker,
+)
+```
+
 ### Node labels
 
 Node labels are established during `fit` and reused for subsequent calls to

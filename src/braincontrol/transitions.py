@@ -26,7 +26,9 @@ from braincontrol.utils.validation import (
     _validate_square_matrix_or_identity,
     _validate_time_horizon,
     _validate_transition_order,
-    _resolve_energy_type_parameters
+    _resolve_energy_type_parameters,
+    _resolve_reference_state,
+    _validate_reference_state,
 )
 
 from nctpy.energies import get_control_inputs, integrate_u
@@ -138,7 +140,6 @@ def get_transition_energy(control_trajectories):
 ## Class
 ###############################################################################
 
-# TODO: Is it true that xr can be also array like?
 class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output_keys=None):
     """Transform states or labelled NIfTI images into transition energies.
 
@@ -174,8 +175,11 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         both parameters to be provided.
     system : {"continuous", "discrete"}, default="continuous"
         Time system used for adjacency normalization and control computation.
-    xr : array-like or str, default="zero"
-        Reference state forwarded to :func:`nctpy.energies.get_control_inputs`.
+    xr : {"zero", "x0", "xf", "midpoint"}, ndarray, or 3D Niimg-like, \
+            default="zero"
+        Reference state used to constrain the state trajectory. NumPy input
+        must have shape ``(n_nodes,)`` or ``(n_nodes, 1)``. Image-like input
+        is converted to a node vector with ``masker``.
     expm_version : {"scipy", "eig"}, default="scipy"
         Matrix-exponential implementation forwarded to ``nctpy``.
     masker : transformer, optional
@@ -255,10 +259,8 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         """Validate and resolve Network Control Theory parameters."""
         
         # validate categorical parameters
-        # FIXME: xr can also be a vector!
         _validate_choice(energy_type,"energy_type",("minimal", "optimal"))
         _validate_choice(system,"system",("continuous", "discrete"))
-        _validate_choice(xr,"xr",("x0", "xf", "zero", "midpoint"),)
         _validate_choice(expm_version,"expm_version",("scipy", "eig"))
     
         # validate adjacency matrix and normalization parameters
@@ -269,6 +271,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         # resolve adjacency matrix     
         A = np.asarray(A)
         n_nodes = A.shape[0]
+
+        # Image-like references are resolved after the state masker is fit.
+        _validate_reference_state(xr, n_nodes)
         
         if normalize_A == True:
             A_norm = matrix_normalization(A,system,c)
@@ -304,12 +309,12 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             "n_nodes_": n_nodes,
         }
     
-    def _fit_masker(self, X):
+    def _fit_masker(self, X, input_name="Image-like state input"):
         """Clone and fit the masker for Niimg-like state input."""
         
         if self.masker is None:
             raise ValueError(
-                "Image-like state input requires a masker, for example "
+                f"{input_name} requires a masker, for example "
                 "NiftiLabelsMasker(labels_img=atlas)"
             )
     
@@ -402,7 +407,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         self.n_features_in_ = n_state_nodes
         self.node_labels_ = node_labels_fitted
         
-    # TODO: Is it true that xr can be also array like?
     def fit(self, X=None,y=None,*,x0=None,xf=None,node_labels=None):
         """Validate and fit all inputs, i.e. check nct parameters and check state inputs"""
         
@@ -435,6 +439,21 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
 
         # validate and fit state input. Sets X_
         self._fit_states(X,x0,xf,node_labels)
+
+        # Resolve xr only after a state masker is available. When states are
+        # tabular, fit the configured masker on the reference image itself.
+        reference_masker = self.masker_
+        if not isinstance(self.xr, (str, np.ndarray)) and reference_masker is None:
+            reference_masker = self._fit_masker(
+                self.xr,
+                input_name="Image-like xr",
+            )
+
+        self.xr_ = _resolve_reference_state(
+            self.xr,
+            self.n_nodes_,
+            masker=reference_masker,
+        )
 
         # FIXME: What should .fit() return?
         return self

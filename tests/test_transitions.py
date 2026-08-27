@@ -432,6 +432,118 @@ def test_transitioner_can_use_pre_normalized_adjacency(transition_data):
     np.testing.assert_array_equal(transitioner.A_norm_, adjacency)
 
 
+@pytest.mark.parametrize("xr", ["zero", "x0", "xf", "midpoint"])
+def test_transitioner_accepts_named_reference_states(transition_data, xr):
+    """Check that every reference-state name supported by nctpy is retained."""
+    adjacency, states = transition_data
+
+    transitioner = Transitioner(A=adjacency, T=0.002, xr=xr).fit(
+        pd.DataFrame(states)
+    )
+
+    assert transitioner.xr_ == xr
+
+
+@pytest.mark.parametrize("shape", [(2,), (2, 1)])
+def test_transitioner_resolves_array_reference_state(transition_data, shape):
+    """Check that vector references become independent nctpy column vectors."""
+    adjacency, states = transition_data
+    xr = np.array([0.25, 0.75]).reshape(shape)
+
+    transitioner = Transitioner(A=adjacency, T=0.002, xr=xr).fit(
+        pd.DataFrame(states)
+    )
+
+    assert transitioner.xr_.shape == (2, 1)
+    assert not np.shares_memory(transitioner.xr_, xr)
+    np.testing.assert_array_equal(transitioner.xr_.ravel(), [0.25, 0.75])
+
+
+@pytest.mark.parametrize(
+    ("xr", "error", "message"),
+    [
+        (np.ones((1, 2)), ValueError, "xr must have shape"),
+        (np.ones((3, 1)), ValueError, "xr must have shape"),
+        (np.array([[np.nan], [1.0]]), ValueError, "only finite"),
+        (np.array([["a"], ["b"]]), TypeError, "numeric values"),
+        ("unknown", ValueError, "xr must be one of"),
+    ],
+)
+def test_transitioner_validates_reference_state(
+    transition_data, xr, error, message
+):
+    """Check reference vectors and names before invoking nctpy."""
+    adjacency, states = transition_data
+
+    with pytest.raises(error, match=message):
+        Transitioner(A=adjacency, T=0.002, xr=xr).fit(pd.DataFrame(states))
+
+
+def test_transitioner_masks_3d_reference_image(transition_data):
+    """Check that a 3D reference image becomes an nctpy node vector."""
+    adjacency, states = transition_data
+    labels = nib.Nifti1Image(
+        np.array([1, 2], dtype=np.int16).reshape(2, 1, 1),
+        np.eye(4),
+    )
+    reference = nib.Nifti1Image(
+        np.array([0.25, 0.75]).reshape(2, 1, 1),
+        np.eye(4),
+    )
+    masker = NiftiLabelsMasker(
+        labels_img=labels,
+        standardize=None,
+        reports=False,
+        keep_masked_labels=False,
+    )
+
+    transitioner = Transitioner(
+        A=adjacency,
+        T=0.002,
+        xr=reference,
+        masker=masker,
+    ).fit(pd.DataFrame(states))
+
+    assert transitioner.xr_.shape == (2, 1)
+    np.testing.assert_allclose(transitioner.xr_.ravel(), [0.25, 0.75])
+
+    image_energies = transitioner.transform(
+        pd.DataFrame(states),
+        order="combinations",
+    )
+    array_energies = Transitioner(
+        A=adjacency,
+        T=0.002,
+        xr=np.array([[0.25], [0.75]]),
+    ).fit_transform(
+        pd.DataFrame(states),
+        order="combinations",
+    )
+    np.testing.assert_allclose(image_energies, array_energies)
+
+
+def test_image_reference_requires_masker(transition_data):
+    """Check that image references cannot silently bypass parcellation."""
+    adjacency, states = transition_data
+    reference = nib.Nifti1Image(np.ones((2, 1, 1)), np.eye(4))
+
+    with pytest.raises(ValueError, match="Image-like xr requires a masker"):
+        Transitioner(A=adjacency, T=0.002, xr=reference).fit(
+            pd.DataFrame(states)
+        )
+
+
+def test_reference_image_must_be_3d(transition_data):
+    """Check that xr represents exactly one image reference state."""
+    adjacency, states = transition_data
+    reference = nib.Nifti1Image(np.ones((2, 1, 1, 2)), np.eye(4))
+
+    with pytest.raises(ValueError, match="xr must be three-dimensional"):
+        Transitioner(A=adjacency, T=0.002, xr=reference).fit(
+            pd.DataFrame(states)
+        )
+
+
 @pytest.mark.parametrize("normalize_A", [None, 1, "yes"])
 def test_transitioner_requires_boolean_normalize_A(
     transition_data, normalize_A

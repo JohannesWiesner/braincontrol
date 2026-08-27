@@ -222,6 +222,80 @@ def _resolve_energy_type_parameters(
 
     return rho, S
 
+
+def _validate_reference_state(value, n_nodes):
+    """Validate a reference state accepted by ``nctpy``.
+
+    Reference states may be one of the names understood by ``nctpy``, a
+    one-dimensional vector, a column vector, or a three-dimensional
+    Niimg-like object. Image data are converted separately, after a masker has
+    been fitted.
+    """
+    choices = ("x0", "xf", "zero", "midpoint")
+
+    if isinstance(value, str):
+        _validate_choice(value, "xr", choices)
+        return
+
+    if isinstance(value, np.ndarray):
+        if value.shape not in ((n_nodes,), (n_nodes, 1)):
+            raise ValueError(
+                "xr must have shape "
+                f"({n_nodes},) or ({n_nodes}, 1); got {value.shape}"
+            )
+
+        if not np.issubdtype(value.dtype, np.number):
+            raise TypeError("xr must contain numeric values")
+
+        if not np.all(np.isfinite(value)):
+            raise ValueError("xr must contain only finite values")
+
+        return
+
+    try:
+        image = check_niimg(value)
+    except (TypeError, ValueError) as error:
+        raise TypeError(
+            "xr must be 'x0', 'xf', 'zero', 'midpoint', a NumPy "
+            "reference vector, or a 3D Niimg-like object"
+        ) from error
+
+    if len(image.shape) != 3:
+        raise ValueError(
+            "Image-like xr must be three-dimensional; "
+            f"got image shape {image.shape}"
+        )
+
+
+def _resolve_reference_state(value, n_nodes, masker=None):
+    """Return a validated reference state in the form required by ``nctpy``."""
+    _validate_reference_state(value, n_nodes)
+
+    if isinstance(value, str):
+        return str(value)
+
+    if isinstance(value, np.ndarray):
+        return value.reshape(n_nodes, 1).copy()
+
+    if masker is None:
+        raise ValueError(
+            "Image-like xr requires a masker, for example "
+            "NiftiLabelsMasker(labels_img=atlas)"
+        )
+
+    reference = np.asarray(masker.transform(check_niimg(value)))
+    if reference.shape not in ((n_nodes,), (1, n_nodes)):
+        raise ValueError(
+            "Image-like xr must resolve to the same number of nodes as A; "
+            f"expected {n_nodes} nodes, got transformed shape "
+            f"{reference.shape}"
+        )
+
+    if not np.all(np.isfinite(reference)):
+        raise ValueError("Masked xr must contain only finite values")
+
+    return reference.reshape(n_nodes, 1)
+
 ###############################################################################
 ## Validation helpers to check state input(s)
 ###############################################################################
