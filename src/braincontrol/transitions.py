@@ -26,6 +26,7 @@ from braincontrol.utils.validation import (
     _validate_square_matrix_or_identity,
     _validate_time_horizon,
     _validate_transition_order,
+    _resolve_energy_type_parameters
 )
 
 from nctpy.energies import get_control_inputs, integrate_u
@@ -264,53 +265,26 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         _validate_square_matrix(A,"A")
         _validate_boolean(normalize_A,"normalize_A")
         _validate_positive_real(c,"c")
-
-        # validate control input matrix
-        _validate_square_matrix_or_identity(B,"B")
-    
-        # validate energy-specific parameters rho and S
-        # FIXME: Should also be put in a separate function validate_energy_type_rho_and_S?
-        if energy_type == "minimal":
-            
-            if rho is not None or S is not None:
-                raise ValueError(
-                    "rho and S must both be None when energy_type='minimal'"
-                )
-    
-            # nctpy requires a positive rho internally even when S is zero.
-            rho = 1.0
-    
-        elif energy_type == 'optimal':
-            
-            if rho is None or S is None:
-                raise ValueError(
-                    "rho and S must both be provided when energy_type='optimal'"
-                )
-    
-            _validate_rho(rho)
-            _validate_square_matrix_or_identity(S,"S")
-    
-        # validate time horizon
-        _validate_time_horizon(T,system)
-    
-        # resolve matrix A        
+        
+        # resolve adjacency matrix     
         A = np.asarray(A)
         n_nodes = A.shape[0]
         
-        if normalize_A:
+        if normalize_A == True:
             A_norm = matrix_normalization(A,system,c)
-        else:
+        elif normalize_A == False:
             A_norm = A.copy()
             
-        # resolve matrix B
+        # validate and resolve control input matrix B (depends on A)
+        _validate_square_matrix_or_identity(B,"B")
         B = _resolve_array_or_identity(B,n_nodes)
         
-        # resolve matrix S
-        if energy_type == "minimal":
-            S = np.zeros_like(A)
-        else:
-            S = _resolve_array_or_identity(S,n_nodes)
-    
+        # resolve rho and S (depends on energy type and on A)
+        rho, S = _resolve_energy_type_parameters(rho, S, energy_type, n_nodes)
+        
+        # validate time horizon
+        _validate_time_horizon(T,system)
+            
         # all matrices must have the same shape
         _validate_same_shape([A, B, S],["A", "B", "S"])
     

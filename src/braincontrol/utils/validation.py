@@ -163,6 +163,64 @@ def _validate_time_horizon(T, system):
         raise TypeError(
             "T must be a float for a continuous system"
         )
+        
+def _resolve_energy_type_parameters(
+    rho,
+    S,
+    energy_type,
+    n_nodes,
+):
+    """Validate and resolve parameters that depend on energy type.
+
+    For minimal-energy control, ``rho`` and ``S`` must both be ``None``.
+    They are resolved to the values required internally by nctpy.
+
+    For optimal control, ``rho`` and ``S`` must both be provided and valid.
+
+    Parameters
+    ----------
+    rho : float or None
+        Mixing parameter.
+    S : array-like, "identity", or None
+        State-trajectory constraint matrix.
+    energy_type : {"minimal", "optimal"}
+        Type of control energy.
+    A : ndarray of shape (n_nodes, n_nodes)
+        Resolved adjacency matrix.
+    n_nodes : int
+        Number of network nodes.
+
+    Returns
+    -------
+    rho : float
+        Resolved mixing parameter.
+    S : ndarray of shape (n_nodes, n_nodes)
+        Resolved state-trajectory constraint matrix.
+    """
+    
+    if energy_type == "minimal":
+        if rho is not None or S is not None:
+            raise ValueError(
+                "rho and S must both be None when "
+                "energy_type='minimal'"
+            )
+
+        # nctpy requires a positive rho internally even when S is zero.
+        rho = 1.0
+        S = np.zeros((n_nodes,n_nodes))
+
+    elif energy_type == "optimal":
+        if rho is None or S is None:
+            raise ValueError(
+                "rho and S must both be provided when "
+                "energy_type='optimal'"
+            )
+
+        _validate_rho(rho)
+        _validate_square_matrix_or_identity(S,"S",)
+        S = _resolve_array_or_identity(S,n_nodes,)
+
+    return rho, S
 
 ###############################################################################
 ## Validation helpers to check state input(s)
