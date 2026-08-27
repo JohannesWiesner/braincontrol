@@ -47,7 +47,7 @@ def get_transition_trajectories(
     order,
     *,
     system="continuous",
-    xr="zero",
+    xr="xf",
     expm_version="scipy",
 ):
     """Compute state and control trajectories from prevalidated inputs.
@@ -70,7 +70,7 @@ def get_transition_trajectories(
         State-pair selection and ordering.
     system : {"continuous", "discrete"}, default="continuous"
         Time system used for the control computation.
-    xr : array-like or str, default="zero"
+    xr : array-like or str, default="xf"
         Reference state passed to ``nctpy``.
     expm_version : {"scipy", "eig"}, default="scipy"
         Matrix-exponential implementation used by ``nctpy``.
@@ -175,11 +175,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         both parameters to be provided.
     system : {"continuous", "discrete"}, default="continuous"
         Time system used for adjacency normalization and control computation.
-    xr : {"zero", "x0", "xf", "midpoint"}, ndarray, or 3D Niimg-like, \
-            default="zero"
-        Reference state used to constrain the state trajectory. NumPy input
-        must have shape ``(n_nodes,)`` or ``(n_nodes, 1)``. Image-like input
-        is converted to a node vector with ``masker``.
     expm_version : {"scipy", "eig"}, default="scipy"
         Matrix-exponential implementation forwarded to ``nctpy``.
     masker : transformer, optional
@@ -215,7 +210,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         S="identity",
         energy_type="optimal",
         system="continuous",
-        xr="zero",
         expm_version="scipy",
         masker=None,
         memory=None,
@@ -233,7 +227,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         self.S = S
         self.energy_type = energy_type
         self.system = system
-        self.xr = xr
         self.expm_version = expm_version
         self.masker = masker
         self.memory = memory
@@ -407,8 +400,26 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         self.n_features_in_ = n_state_nodes
         self.node_labels_ = node_labels_fitted
         
-    def fit(self, X=None,y=None,*,x0=None,xf=None,node_labels=None):
-        """Validate and fit all inputs, i.e. check nct parameters and check state inputs"""
+    def fit(
+        self,
+        X=None,
+        y=None,
+        *,
+        x0=None,
+        xf=None,
+        xr="xf",
+        node_labels=None,
+    ):
+        """Validate and fit the control model and state inputs.
+
+        Parameters
+        ----------
+        xr : {"zero", "x0", "xf", "midpoint"}, ndarray, or 3D Niimg-like, \
+                default="xf"
+            Reference state used to constrain the state trajectory. NumPy
+            input must have shape ``(n_nodes,)`` or ``(n_nodes, 1)``.
+            Image-like input is converted to a node vector with ``masker``.
+        """
         
         self._fit_cache()
         
@@ -421,7 +432,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             self.S,
             self.energy_type,
             self.system,
-            self.xr,
+            xr,
             self.expm_version,
             self.normalize_A,
             self.c,
@@ -443,14 +454,14 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         # Resolve xr only after a state masker is available. When states are
         # tabular, fit the configured masker on the reference image itself.
         reference_masker = self.masker_
-        if not isinstance(self.xr, (str, np.ndarray)) and reference_masker is None:
+        if not isinstance(xr, (str, np.ndarray)) and reference_masker is None:
             reference_masker = self._fit_masker(
-                self.xr,
+                xr,
                 input_name="Image-like xr",
             )
 
         self.xr_ = _resolve_reference_state(
-            self.xr,
+            xr,
             self.n_nodes_,
             masker=reference_masker,
         )
@@ -581,6 +592,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         *,
         x0=None,
         xf=None,
+        xr="xf",
         node_labels=None,
         state_labels=None,
         order="permutations",
@@ -592,6 +604,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             y,
             x0=x0,
             xf=xf,
+            xr=xr,
             node_labels=node_labels,
         ).transform(
             X,

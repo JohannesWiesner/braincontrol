@@ -437,8 +437,9 @@ def test_transitioner_accepts_named_reference_states(transition_data, xr):
     """Check that every reference-state name supported by nctpy is retained."""
     adjacency, states = transition_data
 
-    transitioner = Transitioner(A=adjacency, T=0.002, xr=xr).fit(
-        pd.DataFrame(states)
+    transitioner = Transitioner(A=adjacency, T=0.002).fit(
+        pd.DataFrame(states),
+        xr=xr,
     )
 
     assert transitioner.xr_ == xr
@@ -450,8 +451,9 @@ def test_transitioner_resolves_array_reference_state(transition_data, shape):
     adjacency, states = transition_data
     xr = np.array([0.25, 0.75]).reshape(shape)
 
-    transitioner = Transitioner(A=adjacency, T=0.002, xr=xr).fit(
-        pd.DataFrame(states)
+    transitioner = Transitioner(A=adjacency, T=0.002).fit(
+        pd.DataFrame(states),
+        xr=xr,
     )
 
     assert transitioner.xr_.shape == (2, 1)
@@ -476,7 +478,18 @@ def test_transitioner_validates_reference_state(
     adjacency, states = transition_data
 
     with pytest.raises(error, match=message):
-        Transitioner(A=adjacency, T=0.002, xr=xr).fit(pd.DataFrame(states))
+        Transitioner(A=adjacency, T=0.002).fit(pd.DataFrame(states), xr=xr)
+
+
+def test_transitioner_defaults_reference_state_to_xf(transition_data):
+    """Check that the fitted reference defaults to each transition target."""
+    adjacency, states = transition_data
+
+    transitioner = Transitioner(A=adjacency, T=0.002).fit(
+        pd.DataFrame(states)
+    )
+
+    assert transitioner.xr_ == "xf"
 
 
 def test_transitioner_masks_3d_reference_image(transition_data):
@@ -500,9 +513,8 @@ def test_transitioner_masks_3d_reference_image(transition_data):
     transitioner = Transitioner(
         A=adjacency,
         T=0.002,
-        xr=reference,
         masker=masker,
-    ).fit(pd.DataFrame(states))
+    ).fit(pd.DataFrame(states), xr=reference)
 
     assert transitioner.xr_.shape == (2, 1)
     np.testing.assert_allclose(transitioner.xr_.ravel(), [0.25, 0.75])
@@ -514,9 +526,9 @@ def test_transitioner_masks_3d_reference_image(transition_data):
     array_energies = Transitioner(
         A=adjacency,
         T=0.002,
-        xr=np.array([[0.25], [0.75]]),
     ).fit_transform(
         pd.DataFrame(states),
+        xr=np.array([[0.25], [0.75]]),
         order="combinations",
     )
     np.testing.assert_allclose(image_energies, array_energies)
@@ -528,8 +540,9 @@ def test_image_reference_requires_masker(transition_data):
     reference = nib.Nifti1Image(np.ones((2, 1, 1)), np.eye(4))
 
     with pytest.raises(ValueError, match="Image-like xr requires a masker"):
-        Transitioner(A=adjacency, T=0.002, xr=reference).fit(
-            pd.DataFrame(states)
+        Transitioner(A=adjacency, T=0.002).fit(
+            pd.DataFrame(states),
+            xr=reference,
         )
 
 
@@ -539,8 +552,9 @@ def test_reference_image_must_be_3d(transition_data):
     reference = nib.Nifti1Image(np.ones((2, 1, 1, 2)), np.eye(4))
 
     with pytest.raises(ValueError, match="xr must be three-dimensional"):
-        Transitioner(A=adjacency, T=0.002, xr=reference).fit(
-            pd.DataFrame(states)
+        Transitioner(A=adjacency, T=0.002).fit(
+            pd.DataFrame(states),
+            xr=reference,
         )
 
 

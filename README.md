@@ -145,14 +145,17 @@ Mixing `energy_type="minimal"` with a non-`None` `rho` or `S` raises a
 ### Reference state
 
 The trajectory reference state `xr` can be `"zero"`, `"x0"`, `"xf"`, or
-`"midpoint"`. It can also be a NumPy vector with one value per network node:
+`"midpoint"`; it defaults to `"xf"`. Because the reference is associated with
+the fitted states, pass it to `fit` or `fit_transform`. It can also be a NumPy
+vector with one value per network node:
 
 ```python
 transitioner = Transitioner(
     A=adjacency,
     T=1,
-    xr=reference_state[:, None],
 )
+
+transitioner.fit(states, xr=reference_state[:, None])
 ```
 
 A 3D niimg-like reference can be supplied when a compatible masker is
@@ -162,9 +165,10 @@ configured. It is masked to an `(n_nodes, 1)` vector during `fit`:
 transitioner = Transitioner(
     A=adjacency,
     T=1,
-    xr=reference_image,
     masker=masker,
 )
+
+transitioner.fit(state_images, xr=reference_image)
 ```
 
 ### Node labels
