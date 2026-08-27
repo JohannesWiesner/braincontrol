@@ -123,7 +123,7 @@ def get_transition_trajectories(
     return state_trajectories, control_trajectories, errors
 
 def get_transition_energy(control_trajectories):
-    """Integrate squared control trajectories for every transition."""
+    """Integrate control trajectories for every transition."""
     
     n_nodes, n_transitions = control_trajectories.shape[1:]
     energies = np.empty((n_transitions, n_nodes))
@@ -303,24 +303,23 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             "n_nodes": n_nodes,
         }
     
-    # TODO: In terms of readability it would be nice if this would return the fitted
-    # masker which could then be set in fit states as self.masker_ = masker_fitted
     def _fit_masker(self, X):
-        """Clone, fit, and validate the masker for image-like state input."""
+        """Clone and fit the masker for Niimg-like state input."""
         if self.masker is None:
             raise ValueError(
                 "Image-like state input requires a masker, for example "
                 "NiftiLabelsMasker(labels_img=atlas)"
             )
     
-        self.masker_ = clone(self.masker)
-        self.masker_.fit(X)
+        masker_fitted = clone(self.masker)
+        masker_fitted.fit(X)
     
-        required_attributes = ("n_elements_","lut_",)
+        required_attributes = ("n_elements_","lut_")
+    
         missing_attributes = [
             attribute
             for attribute in required_attributes
-            if not hasattr(self.masker_, attribute)
+            if not hasattr(masker_fitted, attribute)
         ]
     
         if missing_attributes:
@@ -328,6 +327,8 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 "masker must expose the fitted attributes "
                 f"{', '.join(required_attributes)}"
             )
+    
+        return masker_fitted
     
     # FIXME: Still don't like this in terms of readability. How
     # about _resolve_state_input also outputs node_labels, i.e. if the 
@@ -344,7 +345,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     
         if X_type == "tabular_like":
             
-            self.masker_ = None
+            masker_fitted = None
     
             n_states = X_resolved.shape[0]
             n_state_nodes = X_resolved.shape[1]
@@ -355,21 +356,16 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 node_labels_inferred = None
     
         elif X_type == "niimg_like":
-            self._fit_masker(
-                X_resolved,
-            )
-    
+            
+            masker_fitted = self._fit_masker(X_resolved)
+            
             n_states = X_resolved.shape[3]
-            n_state_nodes = self.masker_.n_elements_
+            n_state_nodes = masker_fitted.n_elements_
     
-            lut = self.masker_.lut_
-            lut = lut.loc[lut["index"] != self.masker_.background_label].reset_index(drop=True)
+            lut = masker_fitted.lut_.loc[masker_fitted.lut_["index"] != masker_fitted.background_label].reset_index(drop=True)
+            node_labels_inferred = pd.MultiIndex.from_frame(lut)
     
-            node_labels_inferred = pd.MultiIndex.from_frame(
-                lut
-            )
-    
-        # State nodes must match adjacency nodes.
+        # number of state nodes must match number of adjacency nodes.
         if n_state_nodes != self.n_nodes_:
             raise ValueError(
                 "State input must have the same number of nodes as A; "
@@ -396,6 +392,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             node_labels_fitted = None
     
         # Store fitted state metadata.
+        self.masker_ = masker_fitted
         self.X_type_ = X_type
         self.n_states_in_ = n_states
         self.n_state_nodes_ = n_state_nodes
@@ -423,6 +420,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             self.c,
         )
         
+        # FIXME: How about the dictionary already returns _attr?
         for attr,value in nct_parameters.items():
             setattr(self,f"{attr}_",value)
             
@@ -588,20 +586,20 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     def get_state_trajectories(self):
         """Return retained state trajectories as a labelled xarray DataArray."""
         return _get_trajectory_array(
-            getattr(self, "state_trajectories_", None),
-            node_labels=self.node_labels_,
-            transition_labels=self.transition_labels_,
-            name="state_trajectories",
-        )
+                    getattr(self, "state_trajectories_", None),
+                    node_labels=self.node_labels_,
+                    transition_labels=self.transition_labels_,
+                    name="state_trajectories",
+                    )
 
     def get_control_trajectories(self):
         """Return retained control trajectories as a labelled xarray DataArray."""
         return _get_trajectory_array(
-            getattr(self, "control_trajectories_", None),
-            node_labels=self.node_labels_,
-            transition_labels=self.transition_labels_,
-            name="control_trajectory",
-        )
+                    getattr(self, "control_trajectories_", None),
+                    node_labels=self.node_labels_,
+                    transition_labels=self.transition_labels_,
+                    name="control_trajectory",
+                    )
 
     def get_feature_names_out(self, input_features=None):
         """Return names for the node-level energy columns."""
