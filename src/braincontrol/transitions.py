@@ -241,7 +241,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         self.store_state_trajectories = store_state_trajectories
         self.store_control_trajectories = store_control_trajectories
     
-    def _check_nct_parameters(
+    def _fit_nct_parameters(
         self,
         A,
         T,
@@ -267,7 +267,10 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         _validate_boolean(normalize_A,"normalize_A")
         _validate_positive_real(c,"c")
         
-        # resolve adjacency matrix     
+        # resolve adjacency matrix
+        # TODO: I am not sure about this, but wouldn't it make sense to 
+        # also to get the node_labels here in case A has them? Then, from 
+        # here on every other matrix or state input that has labels must match the labels of A
         A = np.asarray(A)
         n_nodes = A.shape[0]
 
@@ -347,7 +350,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         ].reset_index(drop=True)
         return pd.MultiIndex.from_frame(lut)
     
-    def _finalize_reference_state(
+    def _get_reference_state(
         self,
         xr_resolved,
         xr_type,
@@ -431,7 +434,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 masker_fitted
             )
 
-        xr_fitted, masker_fitted = self._finalize_reference_state(
+        xr_fitted, masker_fitted = self._get_reference_state(
             xr_resolved,
             xr_type,
             masker_fitted,
@@ -487,7 +490,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         self._fit_cache()
         
         # validate all nctpy inputs used to compute transitions
-        nct_parameters = self._check_nct_parameters(
+        nct_parameters = self._fit_nct_parameters(
             self.A,
             self.T,
             self.B,
@@ -636,7 +639,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 "node labels, including their order"
             )
 
-        xr_transform, _ = self._finalize_reference_state(
+        xr_transform, _ = self._get_reference_state(
             xr_resolved,
             xr_type,
             self.masker_,

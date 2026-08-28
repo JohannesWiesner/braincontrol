@@ -339,6 +339,7 @@ def _resolve_single_state_niimg(value, name):
     return img
 
 # NOTE: Might be smart to split this up in the future for readability reasons
+# NOTE: Might make sense to also split this up into validation part and resolving part?
 def _resolve_state_input(X=None, x0=None, xf=None, xr="xf"):
     """Validate and resolve transition and reference state input.
 
