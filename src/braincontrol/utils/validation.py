@@ -223,79 +223,6 @@ def _resolve_energy_type_parameters(
     return rho, S
 
 
-def _validate_reference_state(value, n_nodes):
-    """Validate a reference state accepted by ``nctpy``.
-
-    Reference states may be one of the names understood by ``nctpy``, a
-    one-dimensional vector, a column vector, or a three-dimensional
-    Niimg-like object. Image data are converted separately, after a masker has
-    been fitted.
-    """
-    choices = ("x0", "xf", "zero", "midpoint")
-
-    if isinstance(value, str):
-        _validate_choice(value, "xr", choices)
-        return
-
-    if isinstance(value, np.ndarray):
-        if value.shape not in ((n_nodes,), (n_nodes, 1)):
-            raise ValueError(
-                "xr must have shape "
-                f"({n_nodes},) or ({n_nodes}, 1); got {value.shape}"
-            )
-
-        if not np.issubdtype(value.dtype, np.number):
-            raise TypeError("xr must contain numeric values")
-
-        if not np.all(np.isfinite(value)):
-            raise ValueError("xr must contain only finite values")
-
-        return
-
-    try:
-        image = check_niimg(value)
-    except (TypeError, ValueError) as error:
-        raise TypeError(
-            "xr must be 'x0', 'xf', 'zero', 'midpoint', a NumPy "
-            "reference vector, or a 3D Niimg-like object"
-        ) from error
-
-    if len(image.shape) != 3:
-        raise ValueError(
-            "Image-like xr must be three-dimensional; "
-            f"got image shape {image.shape}"
-        )
-
-
-def _resolve_reference_state(value, n_nodes, masker=None):
-    """Return a validated reference state in the form required by ``nctpy``."""
-    _validate_reference_state(value, n_nodes)
-
-    if isinstance(value, str):
-        return str(value)
-
-    if isinstance(value, np.ndarray):
-        return value.reshape(n_nodes, 1).copy()
-
-    if masker is None:
-        raise ValueError(
-            "Image-like xr requires a masker, for example "
-            "NiftiLabelsMasker(labels_img=atlas)"
-        )
-
-    reference = np.asarray(masker.transform(check_niimg(value)))
-    if reference.shape not in ((n_nodes,), (1, n_nodes)):
-        raise ValueError(
-            "Image-like xr must resolve to the same number of nodes as A; "
-            f"expected {n_nodes} nodes, got transformed shape "
-            f"{reference.shape}"
-        )
-
-    if not np.all(np.isfinite(reference)):
-        raise ValueError("Masked xr must contain only finite values")
-
-    return reference.reshape(n_nodes, 1)
-
 ###############################################################################
 ## Validation helpers to check state input(s)
 ###############################################################################
@@ -400,8 +327,8 @@ def _resolve_single_state_niimg(value, name):
     return img
 
 # NOTE: Might be smart to split this up in the future for readability reasons
-def _resolve_state_input(X=None, x0=None, xf=None):
-    """Validate and resolve state input.
+def _resolve_state_input(X=None, x0=None, xf=None, xr="xf"):
+    """Validate and resolve transition and reference state input.
 
     States are represented by rows and nodes by columns for tabular input,
     and by volumes along the fourth dimension for Niimg-like input.
@@ -428,6 +355,9 @@ def _resolve_state_input(X=None, x0=None, xf=None):
         Initial state.
     xf : array-like, Series, or Niimg-like, optional
         Final state.
+    xr : {"zero", "x0", "xf", "midpoint"}, array-like, Series, \
+            Niimg-like, or None, default="xf"
+        Reference state. ``None`` is reserved for minimal-energy control.
 
     Returns
     -------
@@ -435,6 +365,10 @@ def _resolve_state_input(X=None, x0=None, xf=None):
         Resolved state input.
     X_type : {"tabular_like", "niimg_like"}
         Type of the resolved state input.
+    xr_resolved : str, ndarray, Series, Niimg-like, or None
+        Validated reference state.
+    xr_type : {"named", "tabular_like", "niimg_like", None}
+        Type of the resolved reference state.
     """
     
     # check incompatible inputs
@@ -462,94 +396,141 @@ def _resolve_state_input(X=None, x0=None, xf=None):
 
             X_resolved = check_niimg(X,atleast_4d=True)
 
-            return X_resolved, X_type
-
         # X is dataframe
-        if isinstance(X, pd.DataFrame):
+        elif isinstance(X, pd.DataFrame):
             _validate_2d_matrix_and_finite(X,"X")
             
             X_resolved = X.copy()
 
-            return X_resolved, X_type
-
         # X is array-like
-        X_array = np.asarray(X)
-        _validate_2d_matrix_and_finite(X_array,"X",)
-        X_resolved = X_array.copy()
+        else:
+            X_array = np.asarray(X)
+            _validate_2d_matrix_and_finite(X_array,"X",)
+            X_resolved = pd.DataFrame(X_array.copy())
 
-        return X_resolved, X_type
+    else:
+        # x0 and xf must be provided together.
+        if x0 is None or xf is None:
+            raise ValueError(
+                "x0 and xf must be provided together"
+            )
 
-    # x0 and xf must be provided together.
-    if x0 is None or xf is None:
-        raise ValueError(
-            "x0 and xf must be provided together"
-        )
+        # x0 and xf must have the same type
+        x0_type = _is_niimg_or_tabular_like(x0)
+        xf_type = _is_niimg_or_tabular_like(xf)
 
-    # x0 and xf must have the same type
-    x0_type = _is_niimg_or_tabular_like(x0)
-    xf_type = _is_niimg_or_tabular_like(xf)
+        if x0_type != xf_type:
+            raise TypeError("x0 and xf must use the same input type")
 
-    if x0_type != xf_type:
-        raise TypeError("x0 and xf must use the same input type")
+        # Niimg-like endpoints.
+        if x0_type == "niimg_like":
+            x0_img = _resolve_single_state_niimg(x0,"x0")
+            xf_img = _resolve_single_state_niimg(xf,"xf")
+            X_resolved = concat_imgs([x0_img, xf_img])
+            X_type = "niimg_like"
 
-    # Niimg-like endpoints.
-    if x0_type == "niimg_like":
-        
-        x0_img = _resolve_single_state_niimg(x0,"x0")
-        xf_img = _resolve_single_state_niimg(xf,"xf")
-        X_resolved = concat_imgs([x0_img, xf_img])
+        else:
+            # Tabular endpoints must use the same concrete representation.
+            if type(x0) is not type(xf):
+                raise TypeError("x0 and xf must use the same input type")
 
-        return X_resolved, "niimg_like"
+            # Preserve Series node labels.
+            if isinstance(x0, pd.Series):
+                if not x0.index.equals(xf.index):
+                    raise ValueError("x0 and xf must have matching indices")
 
-    # Tabular endpoints must use the same concrete representation.
-    if type(x0) is not type(xf):
-        raise TypeError("x0 and xf must use the same input type")
+                if x0.dtype != xf.dtype:
+                    raise TypeError("x0 and xf must have the same dtype")
 
-    # Preserve Series node labels.
-    if isinstance(x0, pd.Series):
-        if not x0.index.equals(xf.index):
-            raise ValueError("x0 and xf must have matching indices")
+                if (
+                    not np.all(np.isfinite(x0))
+                    or not np.all(np.isfinite(xf))
+                ):
+                    raise ValueError("x0 and xf must contain only finite values")
 
-        if x0.dtype != xf.dtype:
-            raise TypeError("x0 and xf must have the same dtype")
+                X_resolved = pd.DataFrame(
+                    [x0.to_numpy(), xf.to_numpy()],
+                    columns=x0.index,
+                )
 
-        if (
-            not np.all(np.isfinite(x0))
-            or not np.all(np.isfinite(xf))
-        ):
-            raise ValueError("x0 and xf must contain only finite values")
+            else:
+                # Resolve NumPy/list/tuple endpoints.
+                x0_array = np.asarray(x0)
+                xf_array = np.asarray(xf)
 
-        X_resolved = pd.DataFrame(
-            [x0.to_numpy(), xf.to_numpy()],
-            columns=x0.index,
-        )
+                if x0_array.ndim != 1 or xf_array.ndim != 1:
+                    raise ValueError("x0 and xf must be one-dimensional states")
 
-        return X_resolved, "tabular_like"
+                if x0_array.shape != xf_array.shape:
+                    raise ValueError("x0 and xf must contain the same number of nodes")
 
-    # Resolve NumPy/list/tuple endpoints.
-    x0_array = np.asarray(x0)
-    xf_array = np.asarray(xf)
+                if x0_array.dtype != xf_array.dtype:
+                    raise TypeError("x0 and xf must have the same dtype")
 
-    if x0_array.ndim != 1 or xf_array.ndim != 1:
-        raise ValueError("x0 and xf must be one-dimensional states")
+                if (
+                    not np.all(np.isfinite(x0_array))
+                    or not np.all(np.isfinite(xf_array))
+                ):
+                    raise ValueError(
+                        "x0 and xf must contain only finite values"
+                    )
 
-    if x0_array.shape != xf_array.shape:
-        raise ValueError("x0 and xf must contain the same number of nodes")
+                X_resolved = pd.DataFrame(
+                    np.stack((x0_array, xf_array))
+                )
 
-    if x0_array.dtype != xf_array.dtype:
-        raise TypeError("x0 and xf must have the same dtype")
+            X_type = "tabular_like"
 
-    if (
-        not np.all(np.isfinite(x0_array))
-        or not np.all(np.isfinite(xf_array))
-    ):
-        raise ValueError(
-            "x0 and xf must contain only finite values"
-        )
+    # Resolve the reference state alongside all other state inputs.
+    if xr is None:
+        xr_resolved = None
+        xr_type = None
 
-    X_resolved = np.stack((x0_array, xf_array))
+    elif isinstance(xr, str) and xr in ("zero", "x0", "xf", "midpoint"):
+        xr_resolved = str(xr)
+        xr_type = "named"
 
-    return X_resolved, "tabular_like"
+    else:
+        try:
+            xr_type = _is_niimg_or_tabular_like(xr)
+        except (TypeError, ValueError) as error:
+            if isinstance(xr, str):
+                raise ValueError(
+                    "xr must be one of 'zero', 'x0', 'xf', 'midpoint' "
+                    "or a valid Niimg-like path"
+                ) from error
+            raise
+
+        if xr_type == "niimg_like":
+            xr_resolved = _resolve_single_state_niimg(xr, "xr")
+
+        else:
+            if isinstance(xr, pd.DataFrame):
+                raise TypeError(
+                    "xr must be a vector, list, tuple, pandas Series, "
+                    "or compatible reference image"
+                )
+
+            xr_array = np.asarray(xr)
+            if xr_array.ndim == 2 and xr_array.shape[1] == 1:
+                xr_array = xr_array[:, 0]
+            elif xr_array.ndim != 1:
+                raise ValueError(
+                    "xr must be one-dimensional or a column vector"
+                )
+
+            if not np.issubdtype(xr_array.dtype, np.number):
+                raise TypeError("xr must contain numeric values")
+
+            if not np.all(np.isfinite(xr_array)):
+                raise ValueError("xr must contain only finite values")
+
+            if isinstance(xr, pd.Series):
+                xr_resolved = xr.copy()
+            else:
+                xr_resolved = xr_array.copy()
+
+    return X_resolved, X_type, xr_resolved, xr_type
 
 # FIXME: _validate functions should never return anything
 def _validate_transition_order(n_states, order):
