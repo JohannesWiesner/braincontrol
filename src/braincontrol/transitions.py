@@ -270,7 +270,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         # resolve adjacency matrix
         # TODO: I am not sure about this, but wouldn't it make sense to 
         # also to get the node_labels here in case A has them? Then, from 
-        # here on every other matrix or state input that has labels must match the labels of A
+        # here on every other matrix or state input that also has node labels must match the labels of A
         A = np.asarray(A)
         n_nodes = A.shape[0]
 

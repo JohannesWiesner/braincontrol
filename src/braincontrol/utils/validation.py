@@ -163,7 +163,10 @@ def _validate_time_horizon(T, system):
         raise TypeError(
             "T must be a float for a continuous system"
         )
-        
+
+# TODO: Split up into validation part and resolving part
+# Validation part should just check if the combination of inputs is valid
+# Resolving part should actually resolve the input base on energy_type
 def _resolve_energy_type_parameters(
     rho,
     S,
@@ -340,6 +343,7 @@ def _resolve_single_state_niimg(value, name):
 
 # NOTE: Might be smart to split this up in the future for readability reasons
 # NOTE: Might make sense to also split this up into validation part and resolving part?
+# NOTE: Might make sense to handle xr in a separate function?
 def _resolve_state_input(X=None, x0=None, xf=None, xr="xf"):
     """Validate and resolve transition and reference state input.
 
