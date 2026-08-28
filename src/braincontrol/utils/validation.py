@@ -169,13 +169,14 @@ def _resolve_energy_type_parameters(
     S,
     energy_type,
     n_nodes,
+    xr,
 ):
     """Validate and resolve parameters that depend on energy type.
 
-    For minimal-energy control, ``rho`` and ``S`` must both be ``None``.
-    They are resolved to the values required internally by nctpy.
+    For minimal-energy control, ``rho``, ``S``, and ``xr`` must be ``None``.
+    ``rho`` and ``S`` are resolved to the values required internally by nctpy.
 
-    For optimal control, ``rho`` and ``S`` must both be provided and valid.
+    For optimal control, ``rho``, ``S``, and ``xr`` must be provided.
 
     Parameters
     ----------
@@ -185,10 +186,11 @@ def _resolve_energy_type_parameters(
         State-trajectory constraint matrix.
     energy_type : {"minimal", "optimal"}
         Type of control energy.
-    A : ndarray of shape (n_nodes, n_nodes)
-        Resolved adjacency matrix.
     n_nodes : int
         Number of network nodes.
+    xr : object or None
+        Reference-state input. Its concrete state representation is validated
+        by :func:`_resolve_state_input`.
 
     Returns
     -------
@@ -205,6 +207,11 @@ def _resolve_energy_type_parameters(
                 "energy_type='minimal'"
             )
 
+        if xr is not None:
+            raise ValueError(
+                "xr must be None when energy_type='minimal'"
+            )
+
         # nctpy requires a positive rho internally even when S is zero.
         rho = 1.0
         S = np.zeros((n_nodes,n_nodes))
@@ -214,6 +221,11 @@ def _resolve_energy_type_parameters(
             raise ValueError(
                 "rho and S must both be provided when "
                 "energy_type='optimal'"
+            )
+
+        if xr is None:
+            raise ValueError(
+                "xr must be provided when energy_type='optimal'"
             )
 
         _validate_rho(rho)
@@ -369,6 +381,9 @@ def _resolve_state_input(X=None, x0=None, xf=None, xr="xf"):
         Validated reference state.
     xr_type : {"named", "tabular_like", "niimg_like", None}
         Type of the resolved reference state.
+    node_labels_inferred : pandas.Index or None
+        Node labels inferred from tabular state input. Image-like input does
+        not expose node labels until its masker has been fitted.
     """
     
     # check incompatible inputs
@@ -481,6 +496,12 @@ def _resolve_state_input(X=None, x0=None, xf=None, xr="xf"):
 
             X_type = "tabular_like"
 
+    node_labels_inferred = (
+        X_resolved.columns
+        if isinstance(X_resolved, pd.DataFrame)
+        else None
+    )
+
     # Resolve the reference state alongside all other state inputs.
     if xr is None:
         xr_resolved = None
@@ -530,7 +551,13 @@ def _resolve_state_input(X=None, x0=None, xf=None, xr="xf"):
             else:
                 xr_resolved = xr_array.copy()
 
-    return X_resolved, X_type, xr_resolved, xr_type
+    return (
+        X_resolved,
+        X_type,
+        xr_resolved,
+        xr_type,
+        node_labels_inferred,
+    )
 
 # FIXME: _validate functions should never return anything
 def _validate_transition_order(n_states, order):

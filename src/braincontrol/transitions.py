@@ -35,6 +35,9 @@ from nilearn._utils.cache_mixin import CacheMixin
 from sklearn.base import BaseEstimator, TransformerMixin, clone
 from sklearn.utils.validation import check_is_fitted
 
+
+_USE_FITTED_XR = object()
+
 def get_transition_trajectories(
     A,
     X,
@@ -242,10 +245,10 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         S,
         energy_type,
         system,
-        xr,
         expm_version,
         normalize_A,
         c,
+        xr,
     ):
         """Validate and resolve Network Control Theory parameters."""
         
@@ -273,12 +276,13 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         B = _resolve_array_or_identity(B,n_nodes)
         
         # resolve rho and S (depends on energy type and on A)
-        rho, S = _resolve_energy_type_parameters(rho, S, energy_type, n_nodes)
-
-        if energy_type == "minimal" and xr is not None:
-            raise ValueError(
-                "xr must be None when energy_type='minimal'"
-            )
+        rho, S = _resolve_energy_type_parameters(
+            rho,
+            S,
+            energy_type,
+            n_nodes,
+            xr,
+        )
         
         # validate time horizon
         _validate_time_horizon(T,system)
@@ -329,57 +333,23 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     
         return masker_fitted
     
-    # FIXME: Still don't like this in terms of readability. How
-    # about _resolve_state_input also outputs node_labels, i.e. if the 
-    # state input is dataframe like then just infer from the columns?
-    def _fit_states(
+    def _finalize_reference_state(
         self,
-        X,
-        x0,
-        xf,
-        xr,
-        node_labels,
+        xr_resolved,
+        xr_type,
+        masker,
+        n_state_nodes,
     ):
-        """Resolve state input and fit state-related metadata."""
-        
-        X_resolved, X_type, xr_resolved, xr_type = _resolve_state_input(
-            X=X,
-            x0=x0,
-            xf=xf,
-            xr=xr,
-        )
-    
-        if X_type == "tabular_like":
-            
-            masker_fitted = None
-    
-            n_states = X_resolved.shape[0]
-            n_state_nodes = X_resolved.shape[1]
-    
-            if isinstance(X_resolved, pd.DataFrame):
-                node_labels_inferred = X_resolved.columns
-            else:
-                node_labels_inferred = None
-    
-        elif X_type == "niimg_like":
-            
-            masker_fitted = self._fit_masker(X_resolved)
-            
-            n_states = X_resolved.shape[3]
-            n_state_nodes = masker_fitted.n_elements_
-    
-            lut = masker_fitted.lut_.loc[masker_fitted.lut_["index"] != masker_fitted.background_label].reset_index(drop=True)
-            node_labels_inferred = pd.MultiIndex.from_frame(lut)
+        """Convert a resolved reference state to the fitted node space."""
 
-        # Resolve the reference state using the same node representation as X.
         if xr_type == "niimg_like":
-            if masker_fitted is None:
-                masker_fitted = self._fit_masker(
+            if masker is None:
+                masker = self._fit_masker(
                     xr_resolved,
                     input_name="Image-like xr",
                 )
 
-            xr_array = np.asarray(masker_fitted.transform(xr_resolved))
+            xr_array = np.asarray(masker.transform(xr_resolved))
             if xr_array.ndim == 2 and xr_array.shape[0] == 1:
                 xr_array = xr_array[0]
             elif xr_array.ndim != 1:
@@ -399,19 +369,59 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         else:
             xr_fitted = xr_resolved
 
-        if xr_fitted is None and self.energy_type_ != "minimal":
-            raise ValueError(
-                "xr must be provided when energy_type='optimal'"
-            )
-
         if (
             isinstance(xr_fitted, np.ndarray)
             and xr_fitted.shape[0] != n_state_nodes
         ):
             raise ValueError(
                 "xr must have the same number of nodes as the state input; "
-                f"got {xr_fitted.shape[0]} nodes for {n_state_nodes} state nodes"
+                f"got {xr_fitted.shape[0]} nodes for "
+                f"{n_state_nodes} state nodes"
             )
+
+        return xr_fitted, masker
+
+    def _fit_states(
+        self,
+        X,
+        x0,
+        xf,
+        xr,
+        node_labels,
+    ):
+        """Resolve state input and fit state-related metadata."""
+
+        (
+            X_resolved,
+            X_type,
+            xr_resolved,
+            xr_type,
+            node_labels_inferred,
+        ) = _resolve_state_input(X=X, x0=x0, xf=xf, xr=xr)
+
+        if X_type == "tabular_like":
+
+            masker_fitted = None
+
+            n_states = X_resolved.shape[0]
+            n_state_nodes = X_resolved.shape[1]
+
+        elif X_type == "niimg_like":
+
+            masker_fitted = self._fit_masker(X_resolved)
+
+            n_states = X_resolved.shape[3]
+            n_state_nodes = masker_fitted.n_elements_
+
+            lut = masker_fitted.lut_.loc[masker_fitted.lut_["index"] != masker_fitted.background_label].reset_index(drop=True)
+            node_labels_inferred = pd.MultiIndex.from_frame(lut)
+
+        xr_fitted, masker_fitted = self._finalize_reference_state(
+            xr_resolved,
+            xr_type,
+            masker_fitted,
+            n_state_nodes,
+        )
     
         # number of state nodes must match number of adjacency nodes.
         if n_state_nodes != self.n_nodes_:
@@ -481,10 +491,10 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             self.S,
             self.energy_type,
             self.system,
-            xr,
             self.expm_version,
             self.normalize_A,
             self.c,
+            xr,
         )
         
         for attr_,value in nct_parameters.items():
@@ -512,9 +522,23 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         if self.X_type_ == "niimg_like":
             return self.masker_.transform(X)
     
-    def transform(self,X=None,*,x0=None,xf=None,state_labels=None,order='permutations'):
+    def transform(
+        self,
+        X=None,
+        *,
+        x0=None,
+        xf=None,
+        xr=_USE_FITTED_XR,
+        state_labels=None,
+        order="permutations",
+    ):
         """Return integrated control energy with shape transitions by nodes.
         
+        xr : {"zero", "x0", "xf", "midpoint"}, array-like, Series, \
+                Niimg-like, or None, optional
+            Reference state for these transitions. If omitted, reuse the
+            reference supplied during :meth:`fit`. Explicit ``None`` is only
+            valid for a model fitted with ``energy_type='minimal'``.
         state_labels : list-like or MultiIndex-like, optional
             Labels for states. When supplied, :meth:`transform` returns a DataFrame
             whose row index identifies each transition endpoint. If omitted, 
@@ -541,12 +565,30 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             ],
         )
     
+        xr_input = self.xr_ if xr is _USE_FITTED_XR else xr
+
+        # Check the reference against the fitted energy configuration before
+        # resolving its concrete state representation.
+        _resolve_energy_type_parameters(
+            self.rho,
+            self.S,
+            self.energy_type_,
+            self.n_nodes_,
+            xr_input,
+        )
+
         # Resolve transform input into a consistent representation.
-        X_resolved, X_type, _, _ = _resolve_state_input(
+        (
+            X_resolved,
+            X_type,
+            xr_resolved,
+            xr_type,
+            _,
+        ) = _resolve_state_input(
             X=X,
             x0=x0,
             xf=xf,
-            xr=self.xr_,
+            xr=xr_input,
         )
         
         if X_type != self.X_type_:
@@ -570,6 +612,13 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 f"during fit; expected {self.n_state_nodes_}, "
                 f"got {X.shape[1]}"
             )
+
+        xr_transform, _ = self._finalize_reference_state(
+            xr_resolved,
+            xr_type,
+            self.masker_,
+            X.shape[1],
+        )
         
         # compute trajectories
         cached_transition = self._cache(get_transition_trajectories, func_memory_level=1)
@@ -585,7 +634,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             system=self.system_,
             # nctpy still requires an xr value when S is the zero matrix used
             # for minimal energy, although the value cannot affect the cost.
-            xr="zero" if self.xr_ is None else self.xr_,
+            xr="zero" if xr_transform is None else xr_transform,
             expm_version=self.expm_version_,
         )
         

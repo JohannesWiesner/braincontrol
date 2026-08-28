@@ -203,13 +203,14 @@ def test_resolve_state_matrix_returns_dataframe(transition_data):
     """Check that a NumPy state matrix resolves to a two-dimensional DataFrame."""
     _, states = transition_data
 
-    resolved, X_type, xr, xr_type = _resolve_state_input(X=states)
+    resolved, X_type, xr, xr_type, node_labels = _resolve_state_input(X=states)
 
     assert isinstance(resolved, pd.DataFrame)
     np.testing.assert_array_equal(resolved.to_numpy(), states)
     assert X_type == "tabular_like"
     assert xr == "xf"
     assert xr_type == "named"
+    assert node_labels.equals(pd.RangeIndex(2))
 
 
 def test_resolve_dataframe_preserves_labels(transition_data):
@@ -221,18 +222,19 @@ def test_resolve_dataframe_preserves_labels(transition_data):
         columns=pd.Index(["A", "B"], name="node"),
     )
 
-    resolved, _, _, _ = _resolve_state_input(X=frame)
+    resolved, _, _, _, node_labels = _resolve_state_input(X=frame)
 
     assert resolved is not frame
     assert resolved.index.equals(frame.index)
     assert resolved.columns.equals(frame.columns)
+    assert node_labels.equals(frame.columns)
 
 
 def test_resolve_numpy_endpoints_returns_two_state_dataframe(transition_data):
     """Check that separate NumPy endpoints become two rows in a DataFrame."""
     _, states = transition_data
 
-    resolved, _, _, _ = _resolve_state_input(x0=states[0], xf=states[1])
+    resolved, _, _, _, _ = _resolve_state_input(x0=states[0], xf=states[1])
 
     assert resolved.shape == (2, 2)
     np.testing.assert_array_equal(resolved.to_numpy(), states[:2])
@@ -245,10 +247,14 @@ def test_resolve_series_endpoints_preserves_node_labels(transition_data):
     x0 = pd.Series(states[0], index=node_labels)
     xf = pd.Series(states[1], index=node_labels)
 
-    resolved, _, _, _ = _resolve_state_input(x0=x0, xf=xf)
+    resolved, _, _, _, node_labels_inferred = _resolve_state_input(
+        x0=x0,
+        xf=xf,
+    )
 
     assert resolved.shape == (2, 2)
     assert resolved.columns.equals(node_labels)
+    assert node_labels_inferred.equals(node_labels)
 
 
 def test_resolve_state_input_requires_one_complete_input_mode(transition_data):
@@ -289,11 +295,12 @@ def test_resolve_niimg_X_is_always_4d():
     """Check that a single 3D image resolves to a singleton 4D image."""
     image = nib.Nifti1Image(np.ones((2, 1, 1)), np.eye(4))
 
-    resolved, X_type, _, _ = _resolve_state_input(X=image)
+    resolved, X_type, _, _, node_labels = _resolve_state_input(X=image)
 
     assert resolved.ndim == 4
     assert resolved.shape == (2, 1, 1, 1)
     assert X_type == "niimg_like"
+    assert node_labels is None
 
 
 def test_resolve_niimg_endpoints_returns_two_volume_image():
@@ -301,7 +308,7 @@ def test_resolve_niimg_endpoints_returns_two_volume_image():
     x0 = nib.Nifti1Image(np.ones((2, 1, 1)), np.eye(4))
     xf = nib.Nifti1Image(np.zeros((2, 1, 1)), np.eye(4))
 
-    resolved, _, _, _ = _resolve_state_input(x0=x0, xf=xf)
+    resolved, _, _, _, _ = _resolve_state_input(x0=x0, xf=xf)
 
     assert resolved.ndim == 4
     assert resolved.shape == (2, 1, 1, 2)
@@ -699,6 +706,67 @@ def test_transitioner_transform_returns_energy_dataframe(transition_data):
     assert energies.shape == (3, 2)
     assert energies.columns.equals(transitioner.node_labels_)
     assert transitioner.get_errors().shape == (3, 2)
+
+
+def test_transitioner_transform_accepts_new_reference_state(transition_data):
+    """Check that transform can use a reference specific to its new states."""
+    adjacency, states = transition_data
+    new_states = states + np.array([0.2, -0.1])
+    xr = [0.25, 0.75]
+    transitioner = Transitioner(A=adjacency, T=0.002).fit(states)
+
+    transformed = transitioner.transform(
+        new_states,
+        xr=xr,
+        order="combinations",
+    )
+    expected = Transitioner(A=adjacency, T=0.002).fit_transform(
+        new_states,
+        xr=xr,
+        order="combinations",
+    )
+
+    pd.testing.assert_frame_equal(transformed, expected)
+    assert transitioner.xr_ == "xf"
+
+
+def test_transitioner_transform_rejects_none_reference_for_optimal_energy(
+    transition_data,
+):
+    """Check that transform validates xr against fitted optimal parameters."""
+    adjacency, states = transition_data
+    transitioner = Transitioner(A=adjacency, T=0.002).fit(states)
+
+    with pytest.raises(ValueError, match="xr must be provided"):
+        transitioner.transform(states, xr=None)
+
+
+def test_transitioner_transform_rejects_reference_for_minimal_energy(
+    transition_data,
+):
+    """Check that transform keeps minimal-energy control reference-free."""
+    adjacency, states = transition_data
+    transitioner = Transitioner(
+        A=adjacency,
+        T=0.002,
+        energy_type="minimal",
+        rho=None,
+        S=None,
+    ).fit(states, xr=None)
+
+    with pytest.raises(ValueError, match="xr must be None"):
+        transitioner.transform(states, xr="xf")
+
+
+def test_transitioner_transform_rejects_reference_node_mismatch(
+    transition_data,
+):
+    """Check that transform-time xr matches the current state node count."""
+    adjacency, states = transition_data
+    transitioner = Transitioner(A=adjacency, T=0.002).fit(states)
+
+    with pytest.raises(ValueError, match="same number of nodes"):
+        transitioner.transform(states, xr=[0.0, 0.5, 1.0])
 
 
 def test_transitioner_fit_transform_accepts_order(transition_data):

@@ -145,10 +145,9 @@ Mixing `energy_type="minimal"` with a non-`None` `rho` or `S` raises a
 ### Reference state
 
 The trajectory reference state `xr` can be `"zero"`, `"x0"`, `"xf"`, or
-`"midpoint"`; it defaults to `"xf"`. Because the reference is associated with
-the fitted states, pass it to `fit` or `fit_transform`. A custom reference can
-be a NumPy vector, list, tuple, or pandas Series with one value per network
-node:
+`"midpoint"`; it defaults to `"xf"`. Pass it to `fit` or `fit_transform` to
+establish the fitted reference. A custom reference can be a NumPy vector,
+list, tuple, or pandas Series with one value per network node:
 
 ```python
 transitioner = Transitioner(
@@ -157,6 +156,13 @@ transitioner = Transitioner(
 )
 
 transitioner.fit(states, xr=reference_state[:, None])
+```
+
+When transforming a different set of states, pass `xr` to `transform` to use
+a matching reference for that call. Omitting it reuses the fitted reference:
+
+```python
+energy = transitioner.transform(new_states, xr=new_reference_state)
 ```
 
 A single-state niimg-like reference can be supplied when a compatible masker
