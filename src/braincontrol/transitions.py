@@ -337,6 +337,15 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             )
     
         return masker_fitted
+
+    @staticmethod
+    def _get_masker_node_labels(masker):
+        """Return node labels exposed by a fitted masker."""
+
+        lut = masker.lut_.loc[
+            masker.lut_["index"] != masker.background_label
+        ].reset_index(drop=True)
+        return pd.MultiIndex.from_frame(lut)
     
     def _finalize_reference_state(
         self,
@@ -418,8 +427,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             n_states = X_resolved.shape[3]
             n_state_nodes = masker_fitted.n_elements_
 
-            lut = masker_fitted.lut_.loc[masker_fitted.lut_["index"] != masker_fitted.background_label].reset_index(drop=True)
-            node_labels_inferred = pd.MultiIndex.from_frame(lut)
+            node_labels_inferred = self._get_masker_node_labels(
+                masker_fitted
+            )
 
         xr_fitted, masker_fitted = self._finalize_reference_state(
             xr_resolved,
@@ -507,14 +517,22 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         # FIXME: What should .fit() return?
         return self
 
-    def _transform_states(self,X):
-        """Return states as a 2D NumPy array suitable for transition computation."""
-        
-        if self.X_type_ == "tabular_like":
-            return X.to_numpy()
-    
-        if self.X_type_ == "niimg_like":
-            return self.masker_.transform(X)
+    def _transform_states(self, X, X_type, node_labels):
+        """Map states and their labels into the fitted node space."""
+
+        if X_type == "tabular_like":
+            return X.to_numpy(), node_labels
+
+        if self.masker_ is None:
+            raise ValueError(
+                "Image-like transform input requires a masker fitted "
+                "during fit"
+            )
+
+        return (
+            self.masker_.transform(X),
+            self._get_masker_node_labels(self.masker_),
+        )
     
     def transform(
         self,
@@ -580,7 +598,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             X_type,
             xr_resolved,
             xr_type,
-            _,
+            node_labels_transform,
         ) = _resolve_state_input(
             X=X,
             x0=x0,
@@ -588,15 +606,13 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             xr=xr_transform,
         )
         
-        if X_type != self.X_type_:
-            raise TypeError(
-                "State input type must match the type used during fit; "
-                f"fit received {self.X_type_!r}, but transform received "
-                f"{X_type!r}"
-            )
-        
-        # transform into (n_states, n_nodes).
-        X = self._transform_states(X_resolved)
+        # Transform into (n_states, n_nodes), regardless of the concrete
+        # representation used during fit.
+        X, node_labels_transform = self._transform_states(
+            X_resolved,
+            X_type,
+            node_labels_transform,
+        )
         n_states = X.shape[0]
         
         # Validate requested transition ordering.
@@ -608,6 +624,16 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 "State input must contain the same number of nodes as seen "
                 f"during fit; expected {self.n_state_nodes_}, "
                 f"got {X.shape[1]}"
+            )
+
+        if (
+            self.node_labels_ is not None
+            and node_labels_transform is not None
+            and not self.node_labels_.equals(node_labels_transform)
+        ):
+            raise ValueError(
+                "Transform node labels must exactly match the fitted "
+                "node labels, including their order"
             )
 
         xr_transform, _ = self._finalize_reference_state(

@@ -202,8 +202,8 @@ transitioner = Transitioner(
 ### Node labels
 
 Node labels are established during `fit` and reused for subsequent calls to
-`transform`. If no labels are supplied, tabular input uses the columns of the
-resolved state DataFrame.
+`transform`. DataFrame columns, Series indices, and fitted masker metadata are
+used as inferred labels. NumPy arrays, lists, and tuples remain unlabelled.
 
 For plain list-like labels:
 
@@ -219,9 +219,18 @@ energy = transitioner.transform(
 )
 ```
 
-The fitted node labels become the columns of the returned energy DataFrame.
+The fitted node labels become the columns of every returned energy DataFrame.
 Transform input must contain the same number of nodes as the data seen during
-`fit`.
+`fit`. Labelled transform input must have exactly the fitted labels in exactly
+the fitted order; mismatched or reordered labels raise an error. Unlabelled
+input is assumed to already follow the fitted node order. Labels supplied only
+during `transform` do not replace absent fitted labels.
+
+The concrete input representation may change between `fit` and `transform`
+when it can be mapped into the fitted node space. For example, an estimator
+fitted on image data can transform an unlabelled array containing the same
+nodes. Image-like transform input requires a compatible masker that was fitted
+during `fit`.
 
 For pandas DataFrame input, node labels can be inferred directly from the
 columns:

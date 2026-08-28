@@ -210,7 +210,7 @@ def test_resolve_state_matrix_returns_dataframe(transition_data):
     assert X_type == "tabular_like"
     assert xr == "xf"
     assert xr_type == "named"
-    assert node_labels.equals(pd.RangeIndex(2))
+    assert node_labels is None
 
 
 def test_resolve_dataframe_preserves_labels(transition_data):
@@ -412,7 +412,7 @@ def test_transitioner_fits_array_states(transition_data):
     assert transitioner.n_nodes_in_ == 2
     assert transitioner.n_features_in_ == 2
     assert transitioner.X_type_ == "tabular_like"
-    assert transitioner.node_labels_.equals(pd.RangeIndex(2))
+    assert transitioner.node_labels_ is None
     np.testing.assert_array_equal(transitioner.A_, adjacency)
 
 
@@ -720,7 +720,8 @@ def test_transitioner_transform_returns_energy_dataframe(transition_data):
 
     assert isinstance(energies, pd.DataFrame)
     assert energies.shape == (3, 2)
-    assert energies.columns.equals(transitioner.node_labels_)
+    assert transitioner.node_labels_ is None
+    assert energies.columns.equals(pd.RangeIndex(2))
     assert transitioner.get_errors().shape == (3, 2)
 
 
@@ -954,8 +955,8 @@ def test_transitioner_validates_transform_time_state_label_length(
         )
 
 
-def test_transitioner_transform_requires_fitted_input_type(transition_data):
-    """Check that transform uses the same tabular/image modality as fit."""
+def test_image_transform_requires_fitted_masker(transition_data):
+    """Check that cross-representation image input needs a fitted masker."""
     adjacency, states = transition_data
     transitioner = Transitioner(A=adjacency, T=0.002).fit(states)
     image = nib.Nifti1Image(
@@ -963,8 +964,107 @@ def test_transitioner_transform_requires_fitted_input_type(transition_data):
         np.eye(4),
     )
 
-    with pytest.raises(TypeError, match="must match the type used during fit"):
+    with pytest.raises(ValueError, match="requires a masker fitted during fit"):
         transitioner.transform(image)
+
+
+def test_transitioner_accepts_unlabelled_tabular_data_after_image_fit(
+    transition_data,
+):
+    """Check that transform accepts another representation of fitted nodes."""
+    adjacency, states = transition_data
+    labels = nib.Nifti1Image(
+        np.array([1, 2], dtype=np.int16).reshape(2, 1, 1),
+        np.eye(4),
+    )
+    image = nib.Nifti1Image(
+        states.T.reshape(2, 1, 1, 3),
+        np.eye(4),
+    )
+    masker = NiftiLabelsMasker(
+        labels_img=labels,
+        standardize=None,
+        reports=False,
+        keep_masked_labels=False,
+    )
+    transitioner = Transitioner(
+        A=adjacency,
+        T=0.002,
+        masker=masker,
+    ).fit(image)
+
+    image_energies = transitioner.transform(image, order="combinations")
+    tabular_energies = transitioner.transform(states, order="combinations")
+
+    np.testing.assert_allclose(tabular_energies, image_energies)
+    assert tabular_energies.columns.equals(transitioner.node_labels_)
+
+
+@pytest.mark.parametrize(
+    "transform_labels",
+    [
+        ["right", "left"],
+        ["left", "other"],
+    ],
+)
+def test_transitioner_rejects_mismatched_transform_node_labels(
+    transition_data,
+    transform_labels,
+):
+    """Check that transform node identities and order exactly match fit."""
+    adjacency, states = transition_data
+    fitted_labels = ["left", "right"]
+    transitioner = Transitioner(A=adjacency, T=0.002).fit(
+        pd.DataFrame(states, columns=fitted_labels)
+    )
+    transform_states = pd.DataFrame(states, columns=transform_labels)
+
+    with pytest.raises(ValueError, match="exactly match the fitted node labels"):
+        transitioner.transform(transform_states)
+
+
+def test_transitioner_accepts_matching_transform_node_labels(transition_data):
+    """Check that identical fitted and transform node labels are accepted."""
+    adjacency, states = transition_data
+    node_labels = pd.Index(["left", "right"], name="node")
+    fitted_states = pd.DataFrame(states, columns=node_labels)
+    transitioner = Transitioner(A=adjacency, T=0.002).fit(fitted_states)
+
+    energies = transitioner.transform(
+        fitted_states.copy(),
+        order="combinations",
+    )
+
+    assert energies.columns.equals(node_labels)
+
+
+def test_transitioner_accepts_unlabelled_input_after_labelled_fit(
+    transition_data,
+):
+    """Check that unlabelled transform input is assumed to use fitted order."""
+    adjacency, states = transition_data
+    fitted_labels = pd.Index(["left", "right"], name="node")
+    transitioner = Transitioner(A=adjacency, T=0.002).fit(
+        pd.DataFrame(states, columns=fitted_labels)
+    )
+
+    energies = transitioner.transform(states, order="combinations")
+
+    assert energies.columns.equals(fitted_labels)
+
+
+def test_transitioner_keeps_output_unlabelled_after_unlabelled_fit(
+    transition_data,
+):
+    """Check that transform labels do not replace absent fitted labels."""
+    adjacency, states = transition_data
+    transitioner = Transitioner(A=adjacency, T=0.002).fit(states)
+    labelled_states = pd.DataFrame(states, columns=["left", "right"])
+
+    energies = transitioner.transform(labelled_states, order="combinations")
+
+    assert transitioner.node_labels_ is None
+    assert energies.columns.equals(pd.RangeIndex(2))
 
 
 def test_transitioner_transform_requires_fitted_node_count(transition_data):

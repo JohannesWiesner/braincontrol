@@ -382,8 +382,9 @@ def _resolve_state_input(X=None, x0=None, xf=None, xr="xf"):
     xr_type : {"named", "tabular_like", "niimg_like", None}
         Type of the resolved reference state.
     node_labels_inferred : pandas.Index or None
-        Node labels inferred from tabular state input. Image-like input does
-        not expose node labels until its masker has been fitted.
+        Node labels inferred from labelled tabular state input. Unlabelled
+        arrays and image-like input return ``None``; image labels are not
+        available until a masker has been fitted.
     """
     
     # check incompatible inputs
@@ -410,18 +411,21 @@ def _resolve_state_input(X=None, x0=None, xf=None, xr="xf"):
                 X = X.tolist()
 
             X_resolved = check_niimg(X,atleast_4d=True)
+            node_labels_inferred = None
 
         # X is dataframe
         elif isinstance(X, pd.DataFrame):
             _validate_2d_matrix_and_finite(X,"X")
             
             X_resolved = X.copy()
+            node_labels_inferred = X_resolved.columns
 
         # X is array-like
         else:
             X_array = np.asarray(X)
             _validate_2d_matrix_and_finite(X_array,"X",)
             X_resolved = pd.DataFrame(X_array.copy())
+            node_labels_inferred = None
 
     else:
         # x0 and xf must be provided together.
@@ -443,6 +447,7 @@ def _resolve_state_input(X=None, x0=None, xf=None, xr="xf"):
             xf_img = _resolve_single_state_niimg(xf,"xf")
             X_resolved = concat_imgs([x0_img, xf_img])
             X_type = "niimg_like"
+            node_labels_inferred = None
 
         else:
             # Tabular endpoints must use the same concrete representation.
@@ -467,6 +472,7 @@ def _resolve_state_input(X=None, x0=None, xf=None, xr="xf"):
                     [x0.to_numpy(), xf.to_numpy()],
                     columns=x0.index,
                 )
+                node_labels_inferred = X_resolved.columns
 
             else:
                 # Resolve NumPy/list/tuple endpoints.
@@ -493,14 +499,9 @@ def _resolve_state_input(X=None, x0=None, xf=None, xr="xf"):
                 X_resolved = pd.DataFrame(
                     np.stack((x0_array, xf_array))
                 )
+                node_labels_inferred = None
 
             X_type = "tabular_like"
-
-    node_labels_inferred = (
-        X_resolved.columns
-        if isinstance(X_resolved, pd.DataFrame)
-        else None
-    )
 
     # Resolve the reference state alongside all other state inputs.
     if xr is None:
