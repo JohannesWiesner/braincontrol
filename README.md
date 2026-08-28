@@ -160,12 +160,15 @@ transitioner = Transitioner(
 transitioner.fit(states)
 ```
 
-When transforming a different set of states, pass an empirical `xr` to
-`transform` to override the instance reference for that call. Omitting it, or
-passing `None`, uses the instance reference:
+When transforming a different set of states, pass an empirical
+`xr_override` to `transform` to replace the instance reference for that call.
+Omitting it, or passing `None`, uses the instance reference:
 
 ```python
-energy = transitioner.transform(new_states, xr=new_reference_state)
+energy = transitioner.transform(
+    new_states,
+    xr_override=new_reference_state,
+)
 ```
 
 A single-state niimg-like reference can be supplied when a compatible masker

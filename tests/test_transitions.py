@@ -577,7 +577,7 @@ def test_transitioner_masks_3d_reference_image(transition_data):
         T=0.002,
     ).fit_transform(
         pd.DataFrame(states),
-        xr=np.array([[0.25], [0.75]]),
+        xr_override=np.array([[0.25], [0.75]]),
         order="combinations",
     )
     np.testing.assert_allclose(image_energies, array_energies)
@@ -706,7 +706,7 @@ def test_minimal_energy_with_none_reference_can_transform(transition_data):
         rho=None,
         S=None,
         xr=None,
-    ).fit_transform(states, xr=None, order="combinations")
+    ).fit_transform(states, xr_override=None, order="combinations")
 
     assert energies.shape == (3, 2)
 
@@ -733,12 +733,12 @@ def test_transitioner_transform_accepts_new_reference_state(transition_data):
 
     transformed = transitioner.transform(
         new_states,
-        xr=xr,
+        xr_override=xr,
         order="combinations",
     )
     expected = Transitioner(A=adjacency, T=0.002).fit_transform(
         new_states,
-        xr=xr,
+        xr_override=xr,
         order="combinations",
     )
 
@@ -758,7 +758,7 @@ def test_transitioner_transform_uses_custom_instance_reference(transition_data):
     )
     explicit = Transitioner(A=adjacency, T=0.002).fit_transform(
         states,
-        xr=xr,
+        xr_override=xr,
         order="combinations",
     )
 
@@ -772,7 +772,11 @@ def test_transitioner_transform_none_uses_instance_reference(
     adjacency, states = transition_data
     transitioner = Transitioner(A=adjacency, T=0.002).fit(states)
 
-    inherited = transitioner.transform(states, xr=None, order="combinations")
+    inherited = transitioner.transform(
+        states,
+        xr_override=None,
+        order="combinations",
+    )
     omitted = transitioner.transform(states, order="combinations")
 
     pd.testing.assert_frame_equal(inherited, omitted)
@@ -793,7 +797,7 @@ def test_transitioner_transform_rejects_reference_for_minimal_energy(
     ).fit(states)
 
     with pytest.raises(ValueError, match="xr must be None"):
-        transitioner.transform(states, xr="xf")
+        transitioner.transform(states, xr_override="xf")
 
 
 def test_transitioner_transform_rejects_reference_node_mismatch(
@@ -804,7 +808,10 @@ def test_transitioner_transform_rejects_reference_node_mismatch(
     transitioner = Transitioner(A=adjacency, T=0.002).fit(states)
 
     with pytest.raises(ValueError, match="same number of nodes"):
-        transitioner.transform(states, xr=[0.0, 0.5, 1.0])
+        transitioner.transform(
+            states,
+            xr_override=[0.0, 0.5, 1.0],
+        )
 
 
 def test_transitioner_fit_transform_accepts_order(transition_data):

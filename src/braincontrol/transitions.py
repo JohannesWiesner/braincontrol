@@ -175,8 +175,8 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             Niimg-like, or None, default="xf"
         Default trajectory reference state. Optimal control requires a
         non-``None`` reference; minimal control requires ``None``. A compatible
-        reference supplied to :meth:`transform` overrides this value for that
-        call.
+        reference supplied as ``xr_override`` to :meth:`transform` overrides
+        this value for that call.
     system : {"continuous", "discrete"}, default="continuous"
         Time system used for adjacency normalization and control computation.
     expm_version : {"scipy", "eig"}, default="scipy"
@@ -522,13 +522,13 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         *,
         x0=None,
         xf=None,
-        xr=None,
+        xr_override=None,
         state_labels=None,
         order="permutations",
     ):
         """Return integrated control energy with shape transitions by nodes.
         
-        xr : {"zero", "x0", "xf", "midpoint"}, array-like, Series, \
+        xr_override : {"zero", "x0", "xf", "midpoint"}, array-like, Series, \
                 Niimg-like, or None, optional
             Empirical reference state for these transitions. ``None`` uses
             the instance reference configured during construction.
@@ -558,7 +558,11 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             ],
         )
     
-        xr_input = self.xr if xr is None else xr
+        xr_transform = (
+            self.xr
+            if xr_override is None
+            else xr_override
+        )
 
         # Check the reference against the fitted energy configuration before
         # resolving its concrete state representation.
@@ -567,7 +571,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             self.S,
             self.energy_type_,
             self.n_nodes_,
-            xr_input,
+            xr_transform,
         )
 
         # Resolve transform input into a consistent representation.
@@ -581,7 +585,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             X=X,
             x0=x0,
             xf=xf,
-            xr=xr_input,
+            xr=xr_transform,
         )
         
         if X_type != self.X_type_:
@@ -676,15 +680,15 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         *,
         x0=None,
         xf=None,
-        xr=None,
+        xr_override=None,
         node_labels=None,
         state_labels=None,
         order="permutations",
     ):
         """Fit and transform states supplied as ``X`` or as ``x0`` and ``xf``.
 
-        ``xr`` is a transform-time empirical reference. ``None`` uses the
-        reference configured on the instance.
+        ``xr_override`` is a transform-time empirical reference. ``None``
+        uses the reference configured on the instance.
         """
         
         return self.fit(
@@ -697,7 +701,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             X,
             x0=x0,
             xf=xf,
-            xr=xr,
+            xr_override=xr_override,
             state_labels=state_labels,
             order=order,
         )
