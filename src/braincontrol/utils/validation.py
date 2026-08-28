@@ -166,7 +166,8 @@ def _validate_time_horizon(T, system):
 
 # TODO: Split up into validation part and resolving part
 # Validation part should just check if the combination of inputs is valid
-# Resolving part should actually resolve the input base on energy_type
+# Resolving part should actually resolve the input based on energy_type
+# TODO: It's also confusing that xr is only validated but not returned here.
 def _resolve_energy_type_parameters(
     rho,
     S,
@@ -242,6 +243,13 @@ def _resolve_energy_type_parameters(
 ## Validation helpers to check state input(s)
 ###############################################################################
 
+# TODO: Wonder if we could profit from:
+# https://pandas.pydata.org/docs/reference/api/pandas.api.types.is_list_like.html#pandas-api-types-is-list-like
+# The general idea of this function is:
+# It's either a single Niimg-like object or a collection of niimg-like objects (which will require a masker in the downstream),
+# OR it's a list,tuple,pd.Series,nd.array,pd.DataFrame that does NOT contain any niimg-like objects
+# NOTE: Maybe it's also smart to have nested if-else: The first statement just checks if it's a single object 
+# or a list-like object, and the second statement checks if it's niimg-like or a list-like-niimg-like?
 def _is_niimg_or_tabular_like(value):
     """Determine whether input is Niimg-like or tabular-like.
 

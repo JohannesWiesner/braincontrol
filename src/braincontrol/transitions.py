@@ -11,7 +11,7 @@ import pandas as pd
 from braincontrol.utils.io import (
     _coerce_labels,
     _get_trajectory_array,
-    _set_transition_order,
+    _set_transition_order, # FIXME: I think this should belong here
     _state_transition_index,
 )
 
@@ -660,7 +660,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             system=self.system_,
             # nctpy still requires an xr value when S is the zero matrix used
             # for minimal energy, although the value cannot affect the cost.
-            xr="zero" if xr_transform is None else xr_transform,
+            xr="zero" if xr_transform is None else xr_transform, # FIXME: I don't think this is right
             expm_version=self.expm_version_,
         )
         
