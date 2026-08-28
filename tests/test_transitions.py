@@ -449,10 +449,11 @@ def test_transitioner_accepts_named_reference_states(transition_data, xr):
     """Check that every reference-state name supported by nctpy is retained."""
     adjacency, states = transition_data
 
-    transitioner = Transitioner(A=adjacency, T=0.002).fit(
-        pd.DataFrame(states),
+    transitioner = Transitioner(
+        A=adjacency,
+        T=0.002,
         xr=xr,
-    )
+    ).fit(pd.DataFrame(states))
 
     assert transitioner.xr_ == xr
 
@@ -471,10 +472,11 @@ def test_transitioner_resolves_tabular_reference_state(transition_data, xr):
     """Check every tabular reference type becomes an nctpy column vector."""
     adjacency, states = transition_data
 
-    transitioner = Transitioner(A=adjacency, T=0.002).fit(
-        pd.DataFrame(states),
+    transitioner = Transitioner(
+        A=adjacency,
+        T=0.002,
         xr=xr,
-    )
+    ).fit(pd.DataFrame(states))
 
     assert transitioner.xr_.shape == (2, 1)
     np.testing.assert_array_equal(transitioner.xr_.ravel(), [0.25, 0.75])
@@ -499,7 +501,7 @@ def test_transitioner_validates_reference_state(
     adjacency, states = transition_data
 
     with pytest.raises(error, match=message):
-        Transitioner(A=adjacency, T=0.002).fit(pd.DataFrame(states), xr=xr)
+        Transitioner(A=adjacency, T=0.002, xr=xr).fit(pd.DataFrame(states))
 
 
 def test_transitioner_defaults_reference_state_to_xf(transition_data):
@@ -513,6 +515,14 @@ def test_transitioner_defaults_reference_state_to_xf(transition_data):
     assert transitioner.xr_ == "xf"
 
 
+def test_transitioner_fit_does_not_accept_reference_override(transition_data):
+    """Check that reference configuration is not accepted by fit."""
+    adjacency, states = transition_data
+
+    with pytest.raises(TypeError, match="unexpected keyword argument 'xr'"):
+        Transitioner(A=adjacency, T=0.002).fit(states, xr="midpoint")
+
+
 @pytest.mark.parametrize(
     "state_kwargs",
     [
@@ -523,10 +533,11 @@ def test_transitioner_defaults_reference_state_to_xf(transition_data):
 def test_reference_state_must_match_state_node_count(state_kwargs):
     """Check xr against both matrix and separate-endpoint state inputs."""
     with pytest.raises(ValueError, match="same number of nodes as the state input"):
-        Transitioner(A=np.eye(3), T=0.002).fit(
-            **state_kwargs,
+        Transitioner(
+            A=np.eye(3),
+            T=0.002,
             xr=[0.25, 0.75],
-        )
+        ).fit(**state_kwargs)
 
 
 def test_transitioner_masks_3d_reference_image(transition_data):
@@ -551,7 +562,8 @@ def test_transitioner_masks_3d_reference_image(transition_data):
         A=adjacency,
         T=0.002,
         masker=masker,
-    ).fit(pd.DataFrame(states), xr=reference)
+        xr=reference,
+    ).fit(pd.DataFrame(states))
 
     assert transitioner.xr_.shape == (2, 1)
     np.testing.assert_allclose(transitioner.xr_.ravel(), [0.25, 0.75])
@@ -577,10 +589,11 @@ def test_image_reference_requires_masker(transition_data):
     reference = nib.Nifti1Image(np.ones((2, 1, 1)), np.eye(4))
 
     with pytest.raises(ValueError, match="Image-like xr requires a masker"):
-        Transitioner(A=adjacency, T=0.002).fit(
-            pd.DataFrame(states),
+        Transitioner(
+            A=adjacency,
+            T=0.002,
             xr=reference,
-        )
+        ).fit(pd.DataFrame(states))
 
 
 def test_reference_image_must_contain_one_state(transition_data):
@@ -589,10 +602,11 @@ def test_reference_image_must_contain_one_state(transition_data):
     reference = nib.Nifti1Image(np.ones((2, 1, 1, 2)), np.eye(4))
 
     with pytest.raises(ValueError, match="exactly one state"):
-        Transitioner(A=adjacency, T=0.002).fit(
-            pd.DataFrame(states),
+        Transitioner(
+            A=adjacency,
+            T=0.002,
             xr=reference,
-        )
+        ).fit(pd.DataFrame(states))
 
 
 @pytest.mark.parametrize("normalize_A", [None, 1, "yes"])
@@ -655,7 +669,8 @@ def test_transitioner_resolves_minimal_energy_solver_parameters(
         energy_type="minimal",
         rho=None,
         S=None,
-    ).fit(states, xr=None)
+        xr=None,
+    ).fit(states)
 
     assert transitioner.rho_ == 1.0
     np.testing.assert_array_equal(
@@ -690,6 +705,7 @@ def test_minimal_energy_with_none_reference_can_transform(transition_data):
         energy_type="minimal",
         rho=None,
         S=None,
+        xr=None,
     ).fit_transform(states, xr=None, order="combinations")
 
     assert energies.shape == (3, 2)
@@ -727,18 +743,39 @@ def test_transitioner_transform_accepts_new_reference_state(transition_data):
     )
 
     pd.testing.assert_frame_equal(transformed, expected)
+    assert transitioner.xr == "xf"
     assert transitioner.xr_ == "xf"
 
 
-def test_transitioner_transform_rejects_none_reference_for_optimal_energy(
+def test_transitioner_transform_uses_custom_instance_reference(transition_data):
+    """Check that an omitted transform reference inherits custom instance xr."""
+    adjacency, states = transition_data
+    xr = np.array([0.25, 0.75])
+
+    inherited = Transitioner(A=adjacency, T=0.002, xr=xr).fit_transform(
+        states,
+        order="combinations",
+    )
+    explicit = Transitioner(A=adjacency, T=0.002).fit_transform(
+        states,
+        xr=xr,
+        order="combinations",
+    )
+
+    pd.testing.assert_frame_equal(inherited, explicit)
+
+
+def test_transitioner_transform_none_uses_instance_reference(
     transition_data,
 ):
-    """Check that transform validates xr against fitted optimal parameters."""
+    """Check that transform uses the instance reference when xr is None."""
     adjacency, states = transition_data
     transitioner = Transitioner(A=adjacency, T=0.002).fit(states)
 
-    with pytest.raises(ValueError, match="xr must be provided"):
-        transitioner.transform(states, xr=None)
+    inherited = transitioner.transform(states, xr=None, order="combinations")
+    omitted = transitioner.transform(states, order="combinations")
+
+    pd.testing.assert_frame_equal(inherited, omitted)
 
 
 def test_transitioner_transform_rejects_reference_for_minimal_energy(
@@ -752,7 +789,8 @@ def test_transitioner_transform_rejects_reference_for_minimal_energy(
         energy_type="minimal",
         rho=None,
         S=None,
-    ).fit(states, xr=None)
+        xr=None,
+    ).fit(states)
 
     with pytest.raises(ValueError, match="xr must be None"):
         transitioner.transform(states, xr="xf")

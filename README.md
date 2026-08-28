@@ -132,6 +132,7 @@ transitioner = Transitioner(
     energy_type="minimal",
     rho=None,
     S=None,
+    xr=None,
 )
 ```
 
@@ -139,27 +140,29 @@ For minimal energy, `Transitioner` internally resolves these parameters to the
 values required by `nctpy`: `rho` is set to a positive solver value and `S` to
 a zero matrix.
 
-Mixing `energy_type="minimal"` with a non-`None` `rho` or `S` raises a
-`ValueError`. Conversely, optimal energy requires both parameters.
+Mixing `energy_type="minimal"` with a non-`None` `rho`, `S`, or `xr` raises a
+`ValueError`. Conversely, optimal energy requires all three parameters.
 
 ### Reference state
 
-The trajectory reference state `xr` can be `"zero"`, `"x0"`, `"xf"`, or
-`"midpoint"`; it defaults to `"xf"`. Pass it to `fit` or `fit_transform` to
-establish the fitted reference. A custom reference can be a NumPy vector,
-list, tuple, or pandas Series with one value per network node:
+The trajectory reference state `xr` is part of the `Transitioner`
+configuration. It can be `"zero"`, `"x0"`, `"xf"`, or `"midpoint"` and
+defaults to `"xf"`. A custom reference can be a NumPy vector, list, tuple, or
+pandas Series with one value per network node:
 
 ```python
 transitioner = Transitioner(
     A=adjacency,
     T=1,
+    xr=reference_state[:, None],
 )
 
-transitioner.fit(states, xr=reference_state[:, None])
+transitioner.fit(states)
 ```
 
-When transforming a different set of states, pass `xr` to `transform` to use
-a matching reference for that call. Omitting it reuses the fitted reference:
+When transforming a different set of states, pass an empirical `xr` to
+`transform` to override the instance reference for that call. Omitting it, or
+passing `None`, uses the instance reference:
 
 ```python
 energy = transitioner.transform(new_states, xr=new_reference_state)
@@ -173,16 +176,24 @@ transitioner = Transitioner(
     A=adjacency,
     T=1,
     masker=masker,
+    xr=reference_image,
 )
 
-transitioner.fit(state_images, xr=reference_image)
+transitioner.fit(state_images)
 ```
 
 For `energy_type="minimal"`, the reference does not participate in the cost
-and must be set to `None`:
+and must be set to `None` when the instance is created:
 
 ```python
-transitioner.fit(states, xr=None)
+transitioner = Transitioner(
+    A=adjacency,
+    T=1,
+    energy_type="minimal",
+    rho=None,
+    S=None,
+    xr=None,
+)
 ```
 
 ### Node labels

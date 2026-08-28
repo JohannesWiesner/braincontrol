@@ -35,9 +35,6 @@ from nilearn._utils.cache_mixin import CacheMixin
 from sklearn.base import BaseEstimator, TransformerMixin, clone
 from sklearn.utils.validation import check_is_fitted
 
-
-_USE_FITTED_XR = object()
-
 def get_transition_trajectories(
     A,
     X,
@@ -172,8 +169,14 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         State-trajectory constraint matrix for optimal control energy.
     energy_type : {"minimal", "optimal"}, default="optimal"
         Type of control energy to compute. ``"minimal"`` is mutually exclusive
-        with ``rho`` and ``S``, so both must be ``None``. ``"optimal"`` requires
-        both parameters to be provided.
+        with ``rho``, ``S``, and ``xr``, so all three must be ``None``.
+        ``"optimal"`` requires all three parameters to be provided.
+    xr : {"zero", "x0", "xf", "midpoint"}, array-like, Series, \
+            Niimg-like, or None, default="xf"
+        Default trajectory reference state. Optimal control requires a
+        non-``None`` reference; minimal control requires ``None``. A compatible
+        reference supplied to :meth:`transform` overrides this value for that
+        call.
     system : {"continuous", "discrete"}, default="continuous"
         Time system used for adjacency normalization and control computation.
     expm_version : {"scipy", "eig"}, default="scipy"
@@ -210,6 +213,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         rho=1.0,
         S="identity",
         energy_type="optimal",
+        xr="xf",
         system="continuous",
         expm_version="scipy",
         masker=None,
@@ -227,6 +231,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         self.rho = rho
         self.S = S
         self.energy_type = energy_type
+        self.xr = xr
         self.system = system
         self.expm_version = expm_version
         self.masker = masker
@@ -465,20 +470,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         *,
         x0=None,
         xf=None,
-        xr="xf",
         node_labels=None,
     ):
-        """Validate and fit the control model and state inputs.
-
-        Parameters
-        ----------
-        xr : {"zero", "x0", "xf", "midpoint"}, ndarray, list, tuple, \
-                pandas.Series, Niimg-like, or None, default="xf"
-            Reference state used to constrain the state trajectory. NumPy
-            input must have shape ``(n_nodes,)`` or ``(n_nodes, 1)``.
-            Image-like input is converted to a node vector with ``masker``.
-            Minimal-energy control requires ``None``.
-        """
+        """Validate and fit the control model and state inputs."""
         
         self._fit_cache()
         
@@ -494,7 +488,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             self.expm_version,
             self.normalize_A,
             self.c,
-            xr,
+            self.xr,
         )
         
         for attr_,value in nct_parameters.items():
@@ -508,7 +502,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         self.store_control_trajectories_ = self.store_control_trajectories
 
         # validate and fit state input. Sets X_
-        self._fit_states(X,x0,xf,xr,node_labels)
+        self._fit_states(X, x0, xf, self.xr, node_labels)
 
         # FIXME: What should .fit() return?
         return self
@@ -528,7 +522,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         *,
         x0=None,
         xf=None,
-        xr=_USE_FITTED_XR,
+        xr=None,
         state_labels=None,
         order="permutations",
     ):
@@ -536,9 +530,8 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         
         xr : {"zero", "x0", "xf", "midpoint"}, array-like, Series, \
                 Niimg-like, or None, optional
-            Reference state for these transitions. If omitted, reuse the
-            reference supplied during :meth:`fit`. Explicit ``None`` is only
-            valid for a model fitted with ``energy_type='minimal'``.
+            Empirical reference state for these transitions. ``None`` uses
+            the instance reference configured during construction.
         state_labels : list-like or MultiIndex-like, optional
             Labels for states. When supplied, :meth:`transform` returns a DataFrame
             whose row index identifies each transition endpoint. If omitted, 
@@ -565,7 +558,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             ],
         )
     
-        xr_input = self.xr_ if xr is _USE_FITTED_XR else xr
+        xr_input = self.xr if xr is None else xr
 
         # Check the reference against the fitted energy configuration before
         # resolving its concrete state representation.
@@ -683,24 +676,28 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         *,
         x0=None,
         xf=None,
-        xr="xf",
+        xr=None,
         node_labels=None,
         state_labels=None,
         order="permutations",
     ):
-        """Fit and transform states supplied as ``X`` or as ``x0`` and ``xf``."""
+        """Fit and transform states supplied as ``X`` or as ``x0`` and ``xf``.
+
+        ``xr`` is a transform-time empirical reference. ``None`` uses the
+        reference configured on the instance.
+        """
         
         return self.fit(
             X,
             y,
             x0=x0,
             xf=xf,
-            xr=xr,
             node_labels=node_labels,
         ).transform(
             X,
             x0=x0,
             xf=xf,
+            xr=xr,
             state_labels=state_labels,
             order=order,
         )
