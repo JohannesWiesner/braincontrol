@@ -1,0 +1,382 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 1100 500"
+   width="1100"
+   height="500"
+   role="img"
+   aria-labelledby="title description"
+   version="1.1"
+   id="svg2618"
+   sodipodi:docname="logo_new_v2.svg"
+   inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <sodipodi:namedview
+     id="namedview2620"
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1.0"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     showgrid="false"
+     inkscape:zoom="0.84338556"
+     inkscape:cx="589.29157"
+     inkscape:cy="473.68608"
+     inkscape:window-width="2560"
+     inkscape:window-height="1368"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="state-labels" />
+  <title
+     id="title">braincontrol</title>
+  <desc
+     id="description">Two interconnected brain networks joined by a curved trajectory from an initial state to a target state.</desc>
+  <defs
+     id="defs2506">
+    <linearGradient
+       id="source-fill"
+       x1="0"
+       y1="0"
+       x2="1"
+       y2="1">
+      <stop
+         offset="0"
+         stop-color="#67e8f9"
+         stop-opacity=".2"
+         id="stop2489" />
+      <stop
+         offset="1"
+         stop-color="#0ea5e9"
+         stop-opacity=".06"
+         id="stop2491" />
+    </linearGradient>
+    <linearGradient
+       id="target-fill"
+       x1="0"
+       y1="0"
+       x2="1"
+       y2="1">
+      <stop
+         offset="0"
+         stop-color="#a78bfa"
+         stop-opacity=".18"
+         id="stop2494" />
+      <stop
+         offset="1"
+         stop-color="#6366f1"
+         stop-opacity=".06"
+         id="stop2496" />
+    </linearGradient>
+    <linearGradient
+       id="trajectory"
+       x1="352"
+       y1="255"
+       x2="760"
+       y2="185"
+       gradientUnits="userSpaceOnUse">
+      <stop
+         offset="0"
+         stop-color="#06b6d4"
+         id="stop2499" />
+      <stop
+         offset=".48"
+         stop-color="#3b82f6"
+         id="stop2501" />
+      <stop
+         offset="1"
+         stop-color="#8b5cf6"
+         id="stop2503" />
+    </linearGradient>
+  </defs>
+  <!-- Initial brain state -->
+  <g
+     id="source-brain"
+     transform="translate(100,84)"
+     inkscape:label="Initial brain">
+    <g
+       id="source-outline"
+       fill="url(#source-fill)"
+       stroke="#0891b2"
+       stroke-width="3"
+       stroke-linecap="round"
+       stroke-linejoin="round">
+      <path
+         d="M 51 150 C 24 146 14 118 28 96 C 14 77 23 52 47 43 C 47 19 69 7 90 13 C 103 -4 131 -5 147 10 C 168 -3 198 6 207 27 C 236 26 252 46 250 67 C 273 77 277 104 260 121 C 269 144 254 166 230 170 C 218 190 193 192 178 181 C 160 193 142 187 132 174 C 112 185 93 179 83 164 C 70 168 58 161 51 150 Z"
+         id="path2508" />
+      <path
+         d="M 90 13 C 80 29 86 43 102 49 M 147 10 C 142 28 148 39 166 47 M 207 27 C 193 42 195 56 211 67 M 47 43 C 61 53 65 67 58 79 M 28 96 C 46 98 54 107 54 124 M 260 121 C 245 124 236 134 235 148 M 83 164 C 90 147 104 140 119 144 M 178 181 C 184 164 194 154 211 153"
+         id="path2510" />
+      <path
+         d="M 119 174 C 122 156 138 150 153 157 C 166 141 176 124 172 105 C 171 85 178 71 195 66 M 67 106 C 81 89 99 89 114 102 C 127 87 145 88 157 98 M 90 64 C 110 58 122 65 128 80 M 180 111 C 201 99 220 101 234 113"
+         id="path2512" />
+    </g>
+    <g
+       id="source-network-links"
+       fill="none"
+       stroke="#0891b2"
+       stroke-width="2"
+       stroke-linecap="round"
+       opacity=".58">
+      <path
+         d="M 66 112 L 97 70 L 137 88 L 174 60 L 213 84"
+         id="path2515" />
+      <path
+         d="M 66 112 L 109 128 L 137 88 L 162 130 L 213 84"
+         id="path2517" />
+      <path
+         d="M 109 128 L 137 150 L 162 130 L 205 144 L 225 113"
+         id="path2519" />
+      <path
+         d="M 97 70 L 109 128 M 174 60 L 162 130 M 213 84 L 225 113"
+         id="path2521" />
+    </g>
+    <g
+       id="source-network-nodes"
+       fill="#06b6d4">
+      <circle
+         cx="66"
+         cy="112"
+         r="5"
+         id="circle2524" />
+      <circle
+         cx="97"
+         cy="70"
+         r="5"
+         id="circle2526" />
+      <circle
+         cx="137"
+         cy="88"
+         r="6"
+         id="circle2528" />
+      <circle
+         cx="174"
+         cy="60"
+         r="5"
+         id="circle2530" />
+      <circle
+         cx="213"
+         cy="84"
+         r="5"
+         id="circle2532" />
+      <circle
+         cx="109"
+         cy="128"
+         r="5"
+         id="circle2534" />
+      <circle
+         cx="162"
+         cy="130"
+         r="6"
+         id="circle2536" />
+      <circle
+         cx="137"
+         cy="150"
+         r="4"
+         id="circle2538" />
+      <circle
+         cx="205"
+         cy="144"
+         r="5"
+         id="circle2540" />
+      <circle
+         cx="225"
+         cy="113"
+         r="4"
+         id="circle2542" />
+    </g>
+  </g>
+  <!-- Target brain state -->
+  <g
+     id="target-brain"
+     transform="translate(730,84)"
+     inkscape:label="Target brain">
+    <g
+       id="target-outline"
+       fill="url(#target-fill)"
+       stroke="#7c3aed"
+       stroke-width="3"
+       stroke-linecap="round"
+       stroke-linejoin="round">
+      <path
+         d="M 51 150 C 24 146 14 118 28 96 C 14 77 23 52 47 43 C 47 19 69 7 90 13 C 103 -4 131 -5 147 10 C 168 -3 198 6 207 27 C 236 26 252 46 250 67 C 273 77 277 104 260 121 C 269 144 254 166 230 170 C 218 190 193 192 178 181 C 160 193 142 187 132 174 C 112 185 93 179 83 164 C 70 168 58 161 51 150 Z"
+         id="path2546" />
+      <path
+         d="M 90 13 C 80 29 86 43 102 49 M 147 10 C 142 28 148 39 166 47 M 207 27 C 193 42 195 56 211 67 M 47 43 C 61 53 65 67 58 79 M 28 96 C 46 98 54 107 54 124 M 260 121 C 245 124 236 134 235 148 M 83 164 C 90 147 104 140 119 144 M 178 181 C 184 164 194 154 211 153"
+         id="path2548" />
+      <path
+         d="M 119 174 C 122 156 138 150 153 157 C 166 141 176 124 172 105 C 171 85 178 71 195 66 M 67 106 C 81 89 99 89 114 102 C 127 87 145 88 157 98 M 90 64 C 110 58 122 65 128 80 M 180 111 C 201 99 220 101 234 113"
+         id="path2550" />
+    </g>
+    <g
+       id="target-network-links"
+       fill="none"
+       stroke="#7c3aed"
+       stroke-width="2"
+       stroke-linecap="round"
+       opacity=".58">
+      <path
+         d="M 66 112 L 97 70 L 137 88 L 174 60 L 213 84"
+         id="path2553" />
+      <path
+         d="M 66 112 L 109 128 L 137 88 L 162 130 L 213 84"
+         id="path2555" />
+      <path
+         d="M 109 128 L 137 150 L 162 130 L 205 144 L 225 113"
+         id="path2557" />
+      <path
+         d="M 97 70 L 109 128 M 174 60 L 162 130 M 213 84 L 225 113"
+         id="path2559" />
+    </g>
+    <g
+       id="target-network-nodes"
+       fill="#8b5cf6">
+      <circle
+         cx="66"
+         cy="112"
+         r="5"
+         id="circle2562" />
+      <circle
+         cx="97"
+         cy="70"
+         r="5"
+         id="circle2564" />
+      <circle
+         cx="137"
+         cy="88"
+         r="6"
+         id="circle2566" />
+      <circle
+         cx="174"
+         cy="60"
+         r="5"
+         id="circle2568" />
+      <circle
+         cx="213"
+         cy="84"
+         r="5"
+         id="circle2570" />
+      <circle
+         cx="109"
+         cy="128"
+         r="5"
+         id="circle2572" />
+      <circle
+         cx="162"
+         cy="130"
+         r="6"
+         id="circle2574" />
+      <circle
+         cx="137"
+         cy="150"
+         r="4"
+         id="circle2576" />
+      <circle
+         cx="205"
+         cy="144"
+         r="5"
+         id="circle2578" />
+      <circle
+         cx="225"
+         cy="113"
+         r="4"
+         id="circle2580" />
+    </g>
+  </g>
+  <!-- Optimal control trajectory -->
+  <g
+     id="trajectory-group"
+     inkscape:label="Optimal control trajectory">
+    <path
+       d="M 326 196 C 414 280 472 110 560 155 S 676 253 788 167"
+       fill="none"
+       stroke="url(#trajectory)"
+       stroke-width="5"
+       stroke-linecap="round"
+       id="path2584" />
+    <path
+       d="M 764 164 L 789 166 L 781 188"
+       fill="none"
+       stroke="#8b5cf6"
+       stroke-width="5"
+       stroke-linecap="round"
+       stroke-linejoin="round"
+       id="path2586" />
+  </g>
+  <!-- Source and target annotations -->
+  <g
+     id="state-labels"
+     font-family="DejaVu Sans Mono, monospace"
+     font-size="23"
+     font-weight="600"
+     inkscape:label="State labels">
+    <text
+       x="214"
+       y="311"
+       fill="#0891b2"
+       id="text2602"
+       style="-inkscape-font-specification:'DejaVu Sans Mono, monospace, Semi-Bold';font-family:'DejaVu Sans Mono', monospace;font-weight:600;font-style:normal;font-stretch:normal;font-variant:normal;font-size:37.3333px;font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;fill:#0891b2">
+      x<tspan
+   baseline-shift="sub"
+   font-size="15"
+   id="tspan2600"
+   style="-inkscape-font-specification:'DejaVu Sans Mono, monospace, Semi-Bold';font-family:'DejaVu Sans Mono', monospace;font-weight:600;font-style:normal;font-stretch:normal;font-variant:normal;font-size:37.33333333px;font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal">0</tspan></text>
+    <text
+       x="844"
+       y="311"
+       fill="#7c3aed"
+       id="text2606"
+       style="-inkscape-font-specification:'DejaVu Sans Mono, monospace, Semi-Bold';font-family:'DejaVu Sans Mono', monospace;font-weight:600;font-style:normal;font-stretch:normal;font-variant:normal;font-size:42.6667px;font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;fill:#7c3aed">
+      x<tspan
+   baseline-shift="sub"
+   font-size="15"
+   id="tspan2604"
+   style="-inkscape-font-specification:'DejaVu Sans Mono, monospace, Semi-Bold';font-family:'DejaVu Sans Mono', monospace;font-weight:600;font-style:normal;font-stretch:normal;font-variant:normal;font-size:42.66666667px;font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal">f</tspan></text>
+  </g>
+  <!-- Project wordmark -->
+  <g
+     id="wordmark"
+     inkscape:label="Wordmark">
+    <text
+       x="550"
+       y="375"
+       text-anchor="middle"
+       font-family="Inter, DejaVu Sans, sans-serif"
+       font-size="68"
+       font-weight="700"
+       letter-spacing="-2"
+       id="text2613"><tspan
+         fill="#0891b2"
+         id="tspan2609">brain</tspan><tspan
+         fill="#6d28d9"
+         id="tspan2611">control</tspan></text>
+    <text
+       x="550"
+       y="415"
+       text-anchor="middle"
+       fill="#64748b"
+       font-family="Inter, DejaVu Sans, sans-serif"
+       font-size="16"
+       font-weight="600"
+       letter-spacing="3.2"
+       id="text2615">
+      NETWORK CONTROL THEORY FOR NEUROIMAGING DATA
+    </text>
+  </g>
+  <metadata
+     id="metadata2638">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:title>braincontrol</dc:title>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+</svg>
