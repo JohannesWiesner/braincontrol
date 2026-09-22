@@ -88,9 +88,7 @@ def get_transition_trajectories(
     n_transitions, transition_indices = _set_transition_order(X.shape[0],order)
     n_nodes = X.shape[1]
 
-    # TODO: This should be exposed by nctpy!
-    # 0.001 is hardcoded for now, but it would be better if we could
-    # import STEP from nctpy so we always use nctpy as origin 
+    # TODO: This should be exposed by nctpy! 0.001 is hardcoded for now, but it would be better if we could import STEP from nctpy so we always use nctpy as origin 
     if system == "continuous":
         n_state_time_points = int(np.round(T / 0.001) + 1)
         n_control_time_points = n_state_time_points
@@ -155,34 +153,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     
     Parameters
     ----------
-    A : array-like of shape (n_nodes, n_nodes)
-        Adjacency matrix. It is normalized during :meth:`fit` when
-        ``normalize_A=True``.
     T : float
         Positive time horizon. Discrete systems require an integer of at least
         two.
-    B : array-like of shape (n_nodes, n_nodes) or ``"identity"``
-        Control input matrix.
-    rho : float or None, default=1
-        Positive mixing parameter for optimal control energy.
-    S : array-like, ``"identity"``, or None, default="identity"
-        State-trajectory constraint matrix for optimal control energy.
-    energy_type : {"minimal", "optimal"}, default="optimal"
-        Type of control energy to compute. ``"minimal"`` is mutually exclusive
-        with ``rho``, ``S``, and ``xr``, so all three must be ``None``.
-        ``"optimal"`` requires all three parameters to be provided.
-    xr : {"zero", "x0", "xf", "midpoint"}, array-like, Series, \
-            Niimg-like, or None, default="xf"
-        Default trajectory reference state. Optimal control requires a
-        non-``None`` reference; minimal control requires ``None``. A compatible
-        reference supplied as ``xr_override`` to :meth:`transform` overrides
-        this value for that call.
-    system : {"continuous", "discrete"}, default="continuous"
-        Time system used for adjacency normalization and control computation.
-    expm_version : {"scipy", "eig"}, default="scipy"
-        Matrix-exponential implementation forwarded to ``nctpy``.
-    masker : transformer, optional
-        Scikit-learn compatible masker used for image-like state inputs.
     normalize_A : bool, default=True
         If ``True``, normalize ``A`` during :meth:`fit` with
         :func:`nctpy.utils.matrix_normalization` for the selected ``system``.
@@ -190,6 +163,17 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     c : float, default=1
         Positive normalization constant passed to
         :func:`nctpy.utils.matrix_normalization`.
+    energy_type : {"minimal", "optimal"}, default="optimal"
+        Type of control energy to compute. ``"minimal"`` is mutually exclusive
+        with ``rho``, ``S`` and ``xr``.``"optimal"`` requires all three parameters to be provided.
+    rho : float or None, default=1
+        Positive mixing parameter for optimal control energy.
+    system : {"continuous", "discrete"}, default="continuous"
+        Time system used for adjacency normalization and control computation.
+    expm_version : {"scipy", "eig"}, default="scipy"
+        Matrix-exponential implementation forwarded to ``nctpy``.
+    masker : transformer, optional
+        Scikit-learn compatible masker used for image-like state inputs.
     memory : None, str, pathlib.Path, or joblib.Memory, default=None
         Cache location for state-transition computations. Caching is disabled
         when ``None``.
@@ -205,15 +189,11 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
 
     def __init__(
         self,
-        A,
         T,
         normalize_A=True,
         c=1,
-        B="identity",
-        rho=1.0,
-        S="identity",
         energy_type="optimal",
-        xr="xf",
+        rho=1.0,
         system="continuous",
         expm_version="scipy",
         masker=None,
@@ -223,15 +203,11 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         store_state_trajectories=False,
         store_control_trajectories=False,
     ):
-        self.A = A
         self.T = T
         self.normalize_A = normalize_A
         self.c = c
-        self.B = B
-        self.rho = rho
-        self.S = S
         self.energy_type = energy_type
-        self.xr = xr
+        self.rho = rho
         self.system = system
         self.expm_version = expm_version
         self.masker = masker
@@ -283,7 +259,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         _validate_square_matrix_or_identity(B,"B")
         B = _resolve_array_or_identity(B,n_nodes)
         
+        # FIXME: Split this up in validation and resolving
         # resolve rho and S (depends on energy type and on A)
+        # FIXME: xr should be validated by a separate function that checks for _is_niimg_or_tabular or strings ("zero", "x0", "xf", "midpoint")
         rho, S = _resolve_energy_type_parameters(
             rho,
             S,
@@ -311,6 +289,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             "normalize_A_": normalize_A,
             "c_": c,
             "n_nodes_": n_nodes,
+            "xr_": xr
         }
     
     def _fit_masker(self, X, input_name="Image-like state input"):
@@ -326,18 +305,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         masker_fitted.fit(X)
     
         required_attributes = ("n_elements_","lut_")
-    
-        missing_attributes = [
-            attribute
-            for attribute in required_attributes
-            if not hasattr(masker_fitted, attribute)
-        ]
-    
+        missing_attributes = [attribute for attribute in required_attributes if not hasattr(masker_fitted, attribute)]
         if missing_attributes:
-            raise TypeError(
-                "masker must expose the fitted attributes "
-                f"{', '.join(required_attributes)}"
-            )
+            raise TypeError(f"masker must expose the fitted attributes {', '.join(required_attributes)}")
     
         return masker_fitted
 
@@ -475,33 +445,55 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         self.n_features_in_ = n_state_nodes
         self.node_labels_ = node_labels_fitted
         self.xr_ = xr_fitted
-        
+    
+    # FIXME: xr must be passed here
     def fit(
         self,
+        A,
+        B='identity',
+        S='identity',
         X=None,
         y=None,
         *,
         x0=None,
         xf=None,
         node_labels=None,
+        xr='xf'
     ):
-        """Validate and fit the control model and state inputs."""
+        """Validate and fit the control model and state inputs.
+        
+        Parameters
+        ----------
+        A : array-like of shape (n_nodes, n_nodes)
+            Adjacency matrix. It is normalized during :meth:`fit` when
+            ``normalize_A=True``.
+        B : array-like of shape (n_nodes, n_nodes) or ``"identity"``
+            Control input matrix.
+        S : array-like, ``"identity"``, or None, default="identity"
+            State-trajectory constraint matrix for optimal control energy.
+        xr : {"zero", "x0", "xf", "midpoint"}, array-like, Series, \
+                Niimg-like, or None, default="xf"
+            Default trajectory reference state. Optimal control requires a
+            non-``None`` reference; minimal control requires ``None``. A compatible
+            reference supplied as ``xr_override`` to :meth:`transform` overrides
+            this value for that call.
+        """
         
         self._fit_cache()
         
         # validate all nctpy inputs used to compute transitions
         nct_parameters = self._fit_nct_parameters(
-            self.A,
+            A,
             self.T,
-            self.B,
+            B,
             self.rho,
-            self.S,
+            S,
             self.energy_type,
             self.system,
             self.expm_version,
             self.normalize_A,
             self.c,
-            self.xr,
+            xr,
         )
         
         for attr_,value in nct_parameters.items():
@@ -515,7 +507,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         self.store_control_trajectories_ = self.store_control_trajectories
 
         # validate and fit state input. Sets X_
-        self._fit_states(X, x0, xf, self.xr, node_labels)
+        self._fit_states(X, x0, xf, self.xr_, node_labels)
 
         # FIXME: What should .fit() return?
         return self
@@ -580,7 +572,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         )
     
         xr_transform = (
-            self.xr
+            self.xr_
             if xr_override is None
             else xr_override
         )
@@ -588,8 +580,8 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         # Check the reference against the fitted energy configuration before
         # resolving its concrete state representation.
         _resolve_energy_type_parameters(
-            self.rho,
-            self.S,
+            self.rho_,
+            self.S_,
             self.energy_type_,
             self.n_nodes_,
             xr_transform,
