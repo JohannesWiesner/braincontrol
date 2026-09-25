@@ -6,34 +6,80 @@ example, :class:`nilearn.maskers.NiftiLabelsMasker`).
 """
 
 import numpy as np
-import pandas as pd
 
 from braincontrol.utils.io import (
     _coerce_labels,
     _get_trajectory_array,
-    _set_transition_order, # FIXME: I think this should belong here
-    _state_transition_index,
 )
 
 from braincontrol.utils.validation import (
-    _resolve_array_or_identity,
-    _resolve_state_input,
-    _validate_square_matrix,
+    _validate_A,
+    _resolve_A,
+    _validate_B,
+    _resolve_B,
+    _validate_S,
+    _resolve_S,
     _validate_positive_real,
     _validate_boolean,
     _validate_choice,
     _validate_same_shape,
-    _validate_square_matrix_or_identity,
     _validate_time_horizon,
-    _validate_transition_order,
-    _resolve_energy_type_parameters,
+    _validate_rho,
+    _resolve_rho,
+    _validate_xr,
+    _validate_transition_states,
+    _is_niimg_like,
+    _validate_node_counts,
+    _validate_state_array,
+    _get_node_labels,
+    _validate_node_labels
 )
 
 from nctpy.energies import get_control_inputs, integrate_u
-from nctpy.utils import matrix_normalization
 from nilearn._utils.cache_mixin import CacheMixin
 from sklearn.base import BaseEstimator, TransformerMixin, clone
 from sklearn.utils.validation import check_is_fitted
+from itertools import combinations, permutations, product
+from nilearn.maskers import BaseMasker
+from nctpy.utils import matrix_normalization
+
+###############################################################################
+## functions
+###############################################################################
+
+# TODO: Find more suitable names for order choices
+# TODO: Should also work with separate X0 and Xf (assuming that they are later concatenated)
+def _set_transition_order(n_states, order):
+    """Return the number and indices of requested state transitions.
+
+    Each transition tuple contains ``(transition, source, target)``.  The
+    ordering matches the corresponding iterator in :mod:`itertools`.
+    """
+    
+    if not isinstance(n_states, (int, np.integer)) or isinstance(n_states, bool):
+        raise TypeError("n_states must be an integer")
+    if n_states < 1:
+        raise ValueError("n_states must be at least 1")
+        
+    indices = range(n_states)
+    
+    if order == "permutations":
+        pairs = permutations(indices, r=2)
+    elif order == "combinations":
+        pairs = combinations(indices, r=2)
+    elif order == "product":
+        pairs = product(indices, repeat=2)
+    else:
+        pairs = ((index, index) for index in indices)
+
+    transition_indices = [
+        (transition, source, target)
+        for transition, (source, target) in enumerate(pairs)
+    ]
+    
+    n_transitions = len(transition_indices)
+    
+    return n_transitions, transition_indices
 
 def get_transition_trajectories(
     A,
@@ -85,6 +131,8 @@ def get_transition_trajectories(
         Numerical errors reported by ``nctpy`` for each transition.
     """
     
+    # TODO: might be better if this would be done in _set_transition_order
+    # so this function only receives the indices
     n_transitions, transition_indices = _set_transition_order(X.shape[0],order)
     n_nodes = X.shape[1]
 
@@ -137,55 +185,68 @@ def get_transition_energy(control_trajectories):
 ###############################################################################
 
 class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output_keys=None):
-    """Transform states or labelled NIfTI images into transition energies.
-
-    ``X`` passed to :meth:`fit` and :meth:`transform` can be a two-dimensional
-    ``(n_states, n_nodes)`` array.  For image-like input, pass a compatible
-    masker such as ``NiftiLabelsMasker(labels_img=atlas)`` to the constructor;
-    each volume in a 4D image is then treated as one state.
-
-    The fitted transformer exposes retained unintegrated results through
-    :meth:`get_transition_arrays` and numerical errors through
-    :meth:`get_errors`.
-
-    State input can be provided either as ``X``, containing one state per row,
-    or as the separate ``x0`` and ``xf`` keyword arguments.
+    """Transform state transitions into node-level control energies.
     
-    Parameters
-    ----------
-    T : float
-        Positive time horizon. Discrete systems require an integer of at least
-        two.
-    normalize_A : bool, default=True
-        If ``True``, normalize ``A`` during :meth:`fit` with
-        :func:`nctpy.utils.matrix_normalization` for the selected ``system``.
-        If ``False``, use ``A`` as provided.
-    c : float, default=1
-        Positive normalization constant passed to
-        :func:`nctpy.utils.matrix_normalization`.
-    energy_type : {"minimal", "optimal"}, default="optimal"
-        Type of control energy to compute. ``"minimal"`` is mutually exclusive
-        with ``rho``, ``S`` and ``xr``.``"optimal"`` requires all three parameters to be provided.
-    rho : float or None, default=1
-        Positive mixing parameter for optimal control energy.
-    system : {"continuous", "discrete"}, default="continuous"
-        Time system used for adjacency normalization and control computation.
-    expm_version : {"scipy", "eig"}, default="scipy"
-        Matrix-exponential implementation forwarded to ``nctpy``.
-    masker : transformer, optional
-        Scikit-learn compatible masker used for image-like state inputs.
-    memory : None, str, pathlib.Path, or joblib.Memory, default=None
-        Cache location for state-transition computations. Caching is disabled
-        when ``None``.
-    memory_level : int, default=1
-        Cache state-transition computations when this value is at least 1.
-    verbose : int, default=0
-        Verbosity forwarded to Nilearn's caching infrastructure.
-    store_state_trajectories : bool, default=False
-        Whether to retain state trajectories from the latest transform call.
-    store_control_trajectories : bool, default=False
-        Whether to retain control trajectories from the latest transform call.
-    """
+        ``Transitioner`` computes Network Control Theory (NCT) energies from an
+        adjacency matrix and a set of states. State input can be provided either
+        as ``X``, containing one state per row, or as separate ``X0`` and ``Xf``
+        inputs.
+    
+        State inputs may also be Niimg-like objects when a compatible Nilearn
+        masker is provided. The masker is fit and applied independently to each
+        Niimg-like input to obtain its node-level state representation.
+    
+        :meth:`fit` validates the estimator configuration and empirical inputs and
+        records their node schema. :meth:`transform` validates new empirical inputs
+        against the fitted schema, resolves the inputs required for the NCT
+        calculation, and computes transition energies.
+    
+        State and control trajectories from the most recent transform call can
+        optionally be retained and accessed with :meth:`get_state_trajectories`
+        and :meth:`get_control_trajectories`. Numerical errors reported by
+        ``nctpy`` are available through :meth:`get_errors`.
+    
+        Parameters
+        ----------
+        T : float
+            Positive time horizon. Discrete systems require an integer of at least
+            two.
+        normalize_A : bool, default=True
+            If ``True``, normalize the adjacency matrix during :meth:`transform`
+            using :func:`nctpy.utils.matrix_normalization` for the selected
+            ``system``. If ``False``, use the adjacency matrix as provided.
+        c : float, default=1
+            Positive normalization constant passed to
+            :func:`nctpy.utils.matrix_normalization`.
+        energy_type : {"minimal", "optimal"}, default="optimal"
+            Type of control energy to compute. Minimal energy requires ``rho``,
+            ``S``, and ``xr`` to be omitted. Optimal energy requires these
+            parameters to be specified.
+        rho : float or None, default=1.0
+            Positive mixing parameter for optimal control energy. Must be less
+            than or equal to 1. For minimal control energy, ``rho`` must be
+            ``None``.
+        system : {"continuous", "discrete"}, default="continuous"
+            Time system used for adjacency normalization and control computation.
+        expm_version : {"scipy", "eig"}, default="scipy"
+            Matrix-exponential implementation forwarded to ``nctpy``.
+        masker : nilearn.maskers.BaseMasker or None, default=None
+            Masker used to convert Niimg-like state inputs to node-level state
+            representations. Required when Niimg-like state inputs are provided.
+        memory : None, str, pathlib.Path, or joblib.Memory, default=None
+            Cache location for state-transition computations. Caching is disabled
+            when ``None``.
+        memory_level : int, default=1
+            Cache state-transition computations when this value is at least 1.
+        verbose : int, default=0
+            Verbosity forwarded to Nilearn's caching infrastructure.
+        store_state_trajectories : bool, default=False
+            Whether to retain state trajectories from the most recent transform
+            call.
+        store_control_trajectories : bool, default=False
+            Whether to retain control trajectories from the most recent transform
+            call.
+        """
 
     def __init__(
         self,
@@ -217,515 +278,462 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         self.store_state_trajectories = store_state_trajectories
         self.store_control_trajectories = store_control_trajectories
     
-    def _fit_nct_parameters(
+    def _fit_parameters(
         self,
-        A,
         T,
-        B,
         rho,
-        S,
         energy_type,
         system,
         expm_version,
         normalize_A,
         c,
-        xr,
+        store_state_trajectories,
+        store_control_trajectories,
     ):
-        """Validate and resolve Network Control Theory parameters."""
-        
-        # validate categorical parameters
-        _validate_choice(energy_type,"energy_type",("minimal", "optimal"))
-        _validate_choice(system,"system",("continuous", "discrete"))
-        _validate_choice(expm_version,"expm_version",("scipy", "eig"))
+        """Validate and fit Network Control Theory parameters."""
     
-        # validate adjacency matrix and normalization parameters
-        _validate_square_matrix(A,"A")
-        _validate_boolean(normalize_A,"normalize_A")
-        _validate_positive_real(c,"c")
-        
-        # resolve adjacency matrix
-        # TODO: I am not sure about this, but wouldn't it make sense to 
-        # also to get the node_labels here in case A has them? Then, from 
-        # here on every other matrix or state input that also has node labels must match the labels of A
-        A = np.asarray(A)
-        n_nodes = A.shape[0]
-
-        if normalize_A == True:
-            A_norm = matrix_normalization(A,system,c)
-        elif normalize_A == False:
-            A_norm = A.copy()
-            
-        # validate and resolve control input matrix B (depends on A)
-        _validate_square_matrix_or_identity(B,"B")
-        B = _resolve_array_or_identity(B,n_nodes)
-        
-        # FIXME: Split this up in validation and resolving
-        # resolve rho and S (depends on energy type and on A)
-        # FIXME: xr should be validated by a separate function that checks for _is_niimg_or_tabular or strings ("zero", "x0", "xf", "midpoint")
-        rho, S = _resolve_energy_type_parameters(
-            rho,
-            S,
+        # Validate categorical parameters.
+        _validate_choice(
             energy_type,
-            n_nodes,
-            xr,
+            "energy_type",
+            ("minimal", "optimal"),
         )
-        
-        # validate time horizon
-        _validate_time_horizon(T,system)
-            
-        # all matrices must have the same shape
-        _validate_same_shape([A, B, S],["A", "B", "S"])
+        _validate_choice(
+            system,
+            "system",
+            ("continuous", "discrete"),
+        )
+        _validate_choice(
+            expm_version,
+            "expm_version",
+            ("scipy", "eig"),
+        )
     
-        return {
-            "A_": A,
-            "A_norm_": A_norm,
-            "B_": B,
-            "S_": S,
-            "T_": T,
-            "rho_": rho,
-            "energy_type_": energy_type,
-            "system_": system,
-            "expm_version_": expm_version,
-            "normalize_A_": normalize_A,
-            "c_": c,
-            "n_nodes_": n_nodes,
-            "xr_": xr
-        }
+        # Validate normalization parameters.
+        _validate_boolean(normalize_A, "normalize_A")
+        _validate_positive_real(c, "c")
     
-    def _fit_masker(self, X, input_name="Image-like state input"):
-        """Clone and fit the masker for Niimg-like state input."""
-        
-        if self.masker is None:
-            raise ValueError(
-                f"{input_name} requires a masker, for example "
-                "NiftiLabelsMasker(labels_img=atlas)"
-            )
+        # Validate time horizon.
+        _validate_time_horizon(T, system)
     
-        masker_fitted = clone(self.masker)
-        masker_fitted.fit(X)
+        # Validate and resolve rho.
+        _validate_rho(rho, energy_type)
+        rho = _resolve_rho(rho, energy_type)
     
-        required_attributes = ("n_elements_","lut_")
-        missing_attributes = [attribute for attribute in required_attributes if not hasattr(masker_fitted, attribute)]
-        if missing_attributes:
-            raise TypeError(f"masker must expose the fitted attributes {', '.join(required_attributes)}")
+        # Validate storage options.
+        _validate_boolean(
+            store_state_trajectories,
+            "store_state_trajectories",
+        )
+        _validate_boolean(
+            store_control_trajectories,
+            "store_control_trajectories",
+        )
     
-        return masker_fitted
-
-    @staticmethod
-    def _get_masker_node_labels(masker):
-        """Return node labels exposed by a fitted masker."""
-
-        lut = masker.lut_.loc[
-            masker.lut_["index"] != masker.background_label
-        ].reset_index(drop=True)
-        return pd.MultiIndex.from_frame(lut)
+        # Store fitted parameters.
+        self.T_ = T
+        self.rho_ = rho
+        self.energy_type_ = energy_type
+        self.system_ = system
+        self.expm_version_ = expm_version
+        self.normalize_A_ = normalize_A
+        self.c_ = c
+        self.store_state_trajectories_ = store_state_trajectories
+        self.store_control_trajectories_ = store_control_trajectories
     
-    def _get_reference_state(
+    def _fit_matrices(
         self,
-        xr_resolved,
-        xr_type,
-        masker,
-        n_state_nodes,
+        A,
+        B,
+        S,
     ):
-        """Convert a resolved reference state to the fitted node space."""
-
-        if xr_type == "niimg_like":
-            if masker is None:
-                masker = self._fit_masker(
-                    xr_resolved,
-                    input_name="Image-like xr",
-                )
-
-            xr_array = np.asarray(masker.transform(xr_resolved))
-            if xr_array.ndim == 2 and xr_array.shape[0] == 1:
-                xr_array = xr_array[0]
-            elif xr_array.ndim != 1:
-                raise ValueError(
-                    "Image-like xr must resolve to exactly one state; "
-                    f"got transformed shape {xr_array.shape}"
-                )
-
-            if not np.all(np.isfinite(xr_array)):
-                raise ValueError("Masked xr must contain only finite values")
-
-            xr_fitted = xr_array.reshape(-1, 1)
-
-        elif xr_type == "tabular_like":
-            xr_fitted = np.asarray(xr_resolved).reshape(-1, 1).copy()
-
-        else:
-            xr_fitted = xr_resolved
-
-        if (
-            isinstance(xr_fitted, np.ndarray)
-            and xr_fitted.shape[0] != n_state_nodes
-        ):
-            raise ValueError(
-                "xr must have the same number of nodes as the state input; "
-                f"got {xr_fitted.shape[0]} nodes for "
-                f"{n_state_nodes} state nodes"
+        """Validate matrix inputs and fit matrix-related metadata."""
+    
+        # Validate matrices.
+        _validate_A(A)
+        _validate_B(B)
+        _validate_S(S, self.energy_type_)
+    
+        # Extract node labels before resolving matrices.
+        self.node_labels_["A"] = _get_node_labels(A)
+        self.node_labels_["B"] = _get_node_labels(B)
+        self.node_labels_["S"] = _get_node_labels(S)
+    
+        # A determines the number of nodes used to resolve B and S if they are `identity`
+        n_nodes = A.shape[0]
+    
+        # Resolve matrices.
+        A_resolved = _resolve_A(A)
+        B_resolved = _resolve_B(B, n_nodes)
+        S_resolved = _resolve_S(S,self.energy_type_,n_nodes)
+    
+        # Extract node counts after resolving
+        self.n_nodes_["A"] = A_resolved.shape[0]
+        self.n_nodes_["B"] = B_resolved.shape[0]
+        self.n_nodes_["S"] = S_resolved.shape[0]
+    
+        # Validate resolved matrix shapes.
+        _validate_same_shape(
+            [A_resolved, B_resolved, S_resolved],
+            ["A", "B", "S"],
+        )
+    
+    def _fit_transform_masker(self, imgs):
+        """Fit and apply a masker to Niimg-like input.
+    
+        Parameters
+        ----------
+        imgs : Niimg-like
+            Image data to transform.
+    
+        Returns
+        -------
+        array-like
+            Masked image data.
+        """
+        if not isinstance(self.masker, BaseMasker):
+            raise TypeError(
+                "masker must be a nilearn BaseMasker instance "
+                "when Niimg-like state inputs are provided."
             )
-
-        return xr_fitted, masker
-
+    
+        masker = clone(self.masker).fit(imgs)
+    
+        # TODO: Is this really needed?
+        if not hasattr(masker, "n_elements_"):
+            raise TypeError(
+                "masker must expose n_elements_ after fitting."
+            )
+    
+        return masker.transform(imgs)
+    
     def _fit_states(
         self,
         X,
-        x0,
-        xf,
+        X0,
+        Xf,
         xr,
-        node_labels,
     ):
-        """Resolve state input and fit state-related metadata."""
-
-        (
-            X_resolved,
-            X_type,
-            xr_resolved,
-            xr_type,
-            node_labels_inferred,
-        ) = _resolve_state_input(X=X, x0=x0, xf=xf, xr=xr)
-
-        if X_type == "tabular_like":
-
-            masker_fitted = None
-
-            n_states = X_resolved.shape[0]
-            n_state_nodes = X_resolved.shape[1]
-
-        elif X_type == "niimg_like":
-
-            masker_fitted = self._fit_masker(X_resolved)
-
-            n_states = X_resolved.shape[3]
-            n_state_nodes = masker_fitted.n_elements_
-
-            node_labels_inferred = self._get_masker_node_labels(
-                masker_fitted
-            )
-
-        xr_fitted, masker_fitted = self._get_reference_state(
-            xr_resolved,
-            xr_type,
-            masker_fitted,
-            n_state_nodes,
+        """Validate state inputs and fit state-related metadata."""
+    
+        # Validate state-input configuration.
+        _validate_transition_states(
+            X,
+            X0,
+            Xf,
+        )
+        _validate_xr(
+            xr,
+            self.energy_type_,
         )
     
-        # number of state nodes must match number of adjacency nodes.
-        if n_state_nodes != self.n_nodes_:
-            raise ValueError(
-                "State input must have the same number of nodes as A; "
-                f"got {n_state_nodes} nodes for "
-                f"{self.n_nodes_} nodes in A"
-            )
+        for name, state_object in zip(
+            ["X", "X0", "Xf", "xr"],
+            [X, X0, Xf, xr],
+        ):
+            # Convert Niimg-like inputs to their state representation.
+            if _is_niimg_like(state_object):
+                state_object = self._fit_transform_masker(
+                    state_object
+                )
     
-        # Explicit node labels override inferred labels.
-        if node_labels is not None:
-            node_labels_fitted = _coerce_labels(
-                node_labels,
-                n_state_nodes,
-                "node_labels",
-            )
+            # None and string inputs do not themselves define nodes.
+            if state_object is None or isinstance(state_object, str):
+                n_nodes = None
     
-        elif node_labels_inferred is not None:
-            node_labels_fitted = _coerce_labels(
-                node_labels_inferred,
-                n_state_nodes,
-                "node_labels",
-            )
+            else:
+                _validate_state_array(
+                    state_object,
+                    name,
+                )
     
-        else:
-            node_labels_fitted = None
+                state_array = np.asarray(state_object)
     
-        # Store fitted state metadata.
-        self.masker_ = masker_fitted
-        self.X_type_ = X_type
-        self.n_states_in_ = n_states
-        self.n_state_nodes_ = n_state_nodes
-        self.n_features_in_ = n_state_nodes
-        self.node_labels_ = node_labels_fitted
-        self.xr_ = xr_fitted
+                if state_array.ndim == 1:
+                    n_nodes = state_array.shape[0]
+                else:
+                    n_nodes = state_array.shape[1]
     
-    # FIXME: xr must be passed here
+            # Store only schema metadata, not the empirical state object.
+            self.n_nodes_[name] = n_nodes
+            self.node_labels_[name] = _get_node_labels(state_object)
+    
     def fit(
         self,
         A,
-        B='identity',
-        S='identity',
+        B="identity",
+        S="identity",
         X=None,
-        y=None,
-        *,
-        x0=None,
-        xf=None,
-        node_labels=None,
-        xr='xf'
+        X0=None,
+        Xf=None,
+        xr="xf"
     ):
-        """Validate and fit the control model and state inputs.
-        
+        """Fit the Network Control Theory transformer.
+    
         Parameters
         ----------
         A : array-like of shape (n_nodes, n_nodes)
-            Adjacency matrix. It is normalized during :meth:`fit` when
-            ``normalize_A=True``.
-        B : array-like of shape (n_nodes, n_nodes) or ``"identity"``
+            Adjacency matrix.
+        B : array-like of shape (n_nodes, n_nodes) or "identity", \
+                default="identity"
             Control input matrix.
-        S : array-like, ``"identity"``, or None, default="identity"
-            State-trajectory constraint matrix for optimal control energy.
-        xr : {"zero", "x0", "xf", "midpoint"}, array-like, Series, \
-                Niimg-like, or None, default="xf"
-            Default trajectory reference state. Optimal control requires a
-            non-``None`` reference; minimal control requires ``None``. A compatible
-            reference supplied as ``xr_override`` to :meth:`transform` overrides
-            this value for that call.
+        S : array-like of shape (n_nodes, n_nodes), "identity", or None, \
+                default="identity"
+            State-trajectory constraint matrix.
+        X : array-like, Niimg-like, or None, default=None
+            State input.
+        X0 : array-like, Niimg-like, or None, default=None
+            Initial-state input.
+        Xf : array-like, Niimg-like, or None, default=None
+            Final-state input.
+        xr : array-like, str, or None, default="xf"
+            Reference state.
+    
+        Returns
+        -------
+        self : Transitioner
+            Fitted estimator.
         """
-        
-        self._fit_cache()
-        
-        # validate all nctpy inputs used to compute transitions
-        nct_parameters = self._fit_nct_parameters(
-            A,
+        # Validate and store estimator parameters.
+        self._fit_parameters(
             self.T,
-            B,
             self.rho,
-            S,
             self.energy_type,
             self.system,
             self.expm_version,
             self.normalize_A,
             self.c,
+            self.store_state_trajectories,
+            self.store_control_trajectories,
+        )
+    
+        # Initialize fitted schema metadata.
+        self.n_nodes_ = {}
+        self.node_labels_ = {}
+    
+        # Fit matrix schema.
+        self._fit_matrices(
+            A,
+            B,
+            S,
+        )
+    
+        # Fit state schema.
+        self._fit_states(
+            X,
+            X0,
+            Xf,
             xr,
         )
-        
-        for attr_,value in nct_parameters.items():
-            setattr(self,f"{attr_}",value)
-            
-        # validate boolean options
-        _validate_boolean(self.store_state_trajectories, "store_state_trajectories")
-        self.store_state_trajectories_ = self.store_state_trajectories
-        
-        _validate_boolean(self.store_control_trajectories,"store_control_trajectories")
-        self.store_control_trajectories_ = self.store_control_trajectories
-
-        # validate and fit state input. Sets X_
-        self._fit_states(X, x0, xf, self.xr_, node_labels)
-
-        # FIXME: What should .fit() return?
+    
+        # Validate the complete node schema.
+        _validate_node_counts(
+            self.n_nodes_
+        )
+        _validate_node_labels(
+            self.node_labels_
+        )
+    
         return self
 
-    def _transform_states(self, X, X_type, node_labels):
-        """Map states and their labels into the fitted node space."""
 
-        if X_type == "tabular_like":
-            return X.to_numpy(), node_labels
-
-        if self.masker_ is None:
-            raise ValueError(
-                "Image-like transform input requires a masker fitted "
-                "during fit"
-            )
-
-        return (
-            self.masker_.transform(X),
-            self._get_masker_node_labels(self.masker_),
-        )
     
-    def transform(
-        self,
-        X=None,
-        *,
-        x0=None,
-        xf=None,
-        xr_override=None,
-        state_labels=None,
-        order="permutations",
-    ):
-        """Return integrated control energy with shape transitions by nodes.
+    # def transform(
+    #     self,
+    #     X=None,
+    #     *,
+    #     X0=None,
+    #     xf=None,
+    #     xr_override=None,
+    #     state_labels=None,
+    #     order="permutations",
+    # ):
+    #     """Return integrated control energy with shape transitions by nodes.
         
-        xr_override : {"zero", "x0", "xf", "midpoint"}, array-like, Series, \
-                Niimg-like, or None, optional
-            Empirical reference state for these transitions. ``None`` uses
-            the instance reference configured during construction.
-        state_labels : list-like or MultiIndex-like, optional
-            Labels for states. When supplied, :meth:`transform` returns a DataFrame
-            whose row index identifies each transition endpoint. If omitted, 
-            labels are inferred from input.
-        order : {"combinations", "permutations", "product", "stability"}, \
-            default="permutations"
-            State-pair selection and ordering.
+    #     xr_override : {"zero", "x0", "xf", "midpoint"}, array-like, Series, \
+    #             Niimg-like, or None, optional
+    #         Empirical reference state for these transitions. ``None`` uses
+    #         the instance reference configured during construction.
+    #     state_labels : list-like or MultiIndex-like, optional
+    #         Labels for states. When supplied, :meth:`transform` returns a DataFrame
+    #         whose row index identifies each transition endpoint. If omitted, 
+    #         labels are inferred from input.
+    #     order : {"combinations", "permutations", "product", "stability"}, \
+    #         default="permutations"
+    #         State-pair selection and ordering.
             
-            """
+    #         """
 
-        # check that all needed inputs exist
-        # FIXME: Check this (some can be dropped others have to be added?)
-        check_is_fitted(
-            self,
-            attributes=[
-                "A_norm_",
-                "B_",
-                "S_",
-                "rho_",
-                "X_type_",
-                "n_state_nodes_",
-                "node_labels_",
-                "xr_",
-            ],
-        )
+    #     # check that all needed inputs exist
+    #     # FIXME: Check this (some can be dropped others have to be added?)
+    #     check_is_fitted(
+    #         self,
+    #         attributes=[
+    #             "A_norm_",
+    #             "B_",
+    #             "S_",
+    #             "rho_",
+    #             "X_type_",
+    #             "n_state_nodes_",
+    #             "node_labels_",
+    #             "xr_",
+    #         ],
+    #     )
     
-        xr_transform = (
-            self.xr_
-            if xr_override is None
-            else xr_override
-        )
+    #     xr_transform = (
+    #         self.xr_
+    #         if xr_override is None
+    #         else xr_override
+    #     )
 
-        # Check the reference against the fitted energy configuration before
-        # resolving its concrete state representation.
-        _resolve_energy_type_parameters(
-            self.rho_,
-            self.S_,
-            self.energy_type_,
-            self.n_nodes_,
-            xr_transform,
-        )
+    #     # Check the reference against the fitted energy configuration before
+    #     # resolving its concrete state representation.
+    #     _resolve_rho_and_S(
+    #         self.rho_,
+    #         self.S_,
+    #         self.energy_type_,
+    #         self.n_nodes_,
+    #     )
 
-        # Resolve transform input into a consistent representation.
-        (
-            X_resolved,
-            X_type,
-            xr_resolved,
-            xr_type,
-            node_labels_transform,
-        ) = _resolve_state_input(
-            X=X,
-            x0=x0,
-            xf=xf,
-            xr=xr_transform,
-        )
+    #     # Resolve transform input into a consistent representation.
+    #     (
+    #         X_resolved,
+    #         X_type,
+    #         xr_resolved,
+    #         xr_type,
+    #         node_labels_transform,
+    #     ) = _resolve_state_input(
+    #         X=X,
+    #         X0=X0,
+    #         xf=xf,
+    #         xr=xr_transform,
+    #     )
         
-        # Transform into (n_states, n_nodes), regardless of the concrete
-        # representation used during fit.
-        X, node_labels_transform = self._transform_states(
-            X_resolved,
-            X_type,
-            node_labels_transform,
-        )
-        n_states = X.shape[0]
+    #     # Transform into (n_states, n_nodes), regardless of the concrete
+    #     # representation used during fit.
+    #     X, node_labels_transform = self._transform_states(
+    #         X_resolved,
+    #         X_type,
+    #         node_labels_transform,
+    #     )
+    #     n_states = X.shape[0]
         
-        # Validate requested transition ordering.
-        order = _validate_transition_order(n_states, order)
+    #     # Validate requested transition ordering.
+    #     order = _validate_transition_order(n_states, order)
     
-        # number of nodes must match what was seen during fit.
-        if X.shape[1] != self.n_state_nodes_:
-            raise ValueError(
-                "State input must contain the same number of nodes as seen "
-                f"during fit; expected {self.n_state_nodes_}, "
-                f"got {X.shape[1]}"
-            )
+    #     # number of nodes must match what was seen during fit.
+    #     if X.shape[1] != self.n_state_nodes_:
+    #         raise ValueError(
+    #             "State input must contain the same number of nodes as seen "
+    #             f"during fit; expected {self.n_state_nodes_}, "
+    #             f"got {X.shape[1]}"
+    #         )
 
-        if (
-            self.node_labels_ is not None
-            and node_labels_transform is not None
-            and not self.node_labels_.equals(node_labels_transform)
-        ):
-            raise ValueError(
-                "Transform node labels must exactly match the fitted "
-                "node labels, including their order"
-            )
+    #     if (
+    #         self.node_labels_ is not None
+    #         and node_labels_transform is not None
+    #         and not self.node_labels_.equals(node_labels_transform)
+    #     ):
+    #         raise ValueError(
+    #             "Transform node labels must exactly match the fitted "
+    #             "node labels, including their order"
+    #         )
 
-        xr_transform, _ = self._get_reference_state(
-            xr_resolved,
-            xr_type,
-            self.masker_,
-            X.shape[1],
-        )
+    #     xr_transform, _ = self._get_reference_state(
+    #         xr_resolved,
+    #         xr_type,
+    #         self.masker_,
+    #         X.shape[1],
+    #     )
         
-        # compute trajectories
-        cached_transition = self._cache(get_transition_trajectories, func_memory_level=1)
+    #     # compute trajectories
+    #     cached_transition = self._cache(get_transition_trajectories, func_memory_level=1)
 
-        state_trajectories, control_trajectories, errors = cached_transition(
-            A=self.A_norm_,
-            T=self.T_,
-            B=self.B_,
-            X=X,
-            rho=self.rho_,
-            S=self.S_,
-            order=order,
-            system=self.system_,
-            # nctpy still requires an xr value when S is the zero matrix used
-            # for minimal energy, although the value cannot affect the cost.
-            xr="zero" if xr_transform is None else xr_transform, # FIXME: I don't think this is right
-            expm_version=self.expm_version_,
-        )
+    #     state_trajectories, control_trajectories, errors = cached_transition(
+    #         A=self.A_norm_,
+    #         T=self.T_,
+    #         B=self.B_,
+    #         X=X,
+    #         rho=self.rho_,
+    #         S=self.S_,
+    #         order=order,
+    #         system=self.system_,
+    #         # nctpy still requires an xr value when S is the zero matrix used
+    #         # for minimal energy, although the value cannot affect the cost.
+    #         xr="zero" if xr_transform is None else xr_transform, # FIXME: I don't think this is right
+    #         expm_version=self.expm_version_,
+    #     )
         
-        # if set by user during init, store trajectories otherwise don't expose them
-        if self.store_state_trajectories_:
-            self.state_trajectories_ = state_trajectories
-        else:
-            self.__dict__.pop("state_trajectories_", None)
+    #     # if set by user during init, store trajectories otherwise don't expose them
+    #     if self.store_state_trajectories_:
+    #         self.state_trajectories_ = state_trajectories
+    #     else:
+    #         self.__dict__.pop("state_trajectories_", None)
             
-        if self.store_control_trajectories_:
-            self.control_trajectories_ = control_trajectories
-        else:
-            self.__dict__.pop("control_trajectories_",None)
+    #     if self.store_control_trajectories_:
+    #         self.control_trajectories_ = control_trajectories
+    #     else:
+    #         self.__dict__.pop("control_trajectories_",None)
         
-        self.errors_ = errors
+    #     self.errors_ = errors
         
-        # integrate control inputs
-        transition_energy = get_transition_energy(control_trajectories)
+    #     # integrate control inputs
+    #     transition_energy = get_transition_energy(control_trajectories)
         
-        # infer state labels
-        if X_type == "tabular_like":
-            state_labels_inferred = X_resolved.index
+    #     # infer state labels
+    #     if X_type == "tabular_like":
+    #         state_labels_inferred = X_resolved.index
     
-        elif X_type == "niimg_like":
-            state_labels_inferred = None
+    #     elif X_type == "niimg_like":
+    #         state_labels_inferred = None
     
-        # if user has provided separate state labels then overwrite the inferred ones
-        state_labels = state_labels if state_labels is not None else state_labels_inferred
+    #     # if user has provided separate state labels then overwrite the inferred ones
+    #     state_labels = state_labels if state_labels is not None else state_labels_inferred
         
-        # make sure that state labels are always convertable to index and have the expected length
-        state_labels = None if state_labels is None else _coerce_labels(state_labels,n_states,"state_labels")
+    #     # make sure that state labels are always convertable to index and have the expected length
+    #     state_labels = None if state_labels is None else _coerce_labels(state_labels,n_states,"state_labels")
         
-        # compute transition labels and store them
-        transition_labels = None if state_labels is None else _state_transition_index(state_labels,order)
-        self.transition_labels_ = transition_labels
+    #     # compute transition labels and store them
+    #     transition_labels = None if state_labels is None else _state_transition_index(state_labels,order)
+    #     self.transition_labels_ = transition_labels
 
-        # Return df that has either both columns and index, only columns, only index, no columns and no index
-        df_transition_energy = pd.DataFrame(transition_energy,index=transition_labels,columns=self.node_labels_)
+    #     # Return df that has either both columns and index, only columns, only index, no columns and no index
+    #     df_transition_energy = pd.DataFrame(transition_energy,index=transition_labels,columns=self.node_labels_)
                 
-        return df_transition_energy
+    #     return df_transition_energy
 
-    def fit_transform(
-        self,
-        X=None,
-        y=None,
-        *,
-        x0=None,
-        xf=None,
-        xr_override=None,
-        node_labels=None,
-        state_labels=None,
-        order="permutations",
-    ):
-        """Fit and transform states supplied as ``X`` or as ``x0`` and ``xf``.
+    # def fit_transform(
+    #     self,
+    #     X=None,
+    #     y=None,
+    #     *,
+    #     X0=None,
+    #     xf=None,
+    #     xr_override=None,
+    #     node_labels=None,
+    #     state_labels=None,
+    #     order="permutations",
+    # ):
+    #     """Fit and transform states supplied as ``X`` or as ``X0`` and ``xf``.
 
-        ``xr_override`` is a transform-time empirical reference. ``None``
-        uses the reference configured on the instance.
-        """
+    #     ``xr_override`` is a transform-time empirical reference. ``None``
+    #     uses the reference configured on the instance.
+    #     """
         
-        return self.fit(
-            X,
-            y,
-            x0=x0,
-            xf=xf,
-            node_labels=node_labels,
-        ).transform(
-            X,
-            x0=x0,
-            xf=xf,
-            xr_override=xr_override,
-            state_labels=state_labels,
-            order=order,
-        )
+    #     return self.fit(
+    #         X,
+    #         y,
+    #         x0=x0,
+    #         xf=xf,
+    #         node_labels=node_labels,
+    #     ).transform(
+    #         X,
+    #         x0=x0,
+    #         xf=xf,
+    #         xr_override=xr_override,
+    #         state_labels=state_labels,
+    #         order=order,
+    #     )
             
     def get_errors(self):
         """Return numerical errors from the most recent transform call."""

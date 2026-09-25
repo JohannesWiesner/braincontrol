@@ -9,12 +9,54 @@ Utilities for input validation
 import numpy as np
 import pandas as pd
 from nilearn.image import check_niimg
-from nilearn.image import concat_imgs
-from typing import get_args
-from nilearn.nilearn_typing import NiimgLike
 
 ###############################################################################
-## Validation helpers for Network Control Theory parameters
+## Validation helpers to check state inputs
+###############################################################################
+
+def _is_niimg_like(value):
+    """Return True if input can be parsed into a Niimg-like object, otherwise False"""
+    try:
+        check_niimg(value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+def _validate_single_state_niimg(value, name):
+    """Resolve Niimg-like input representing exactly one state.
+
+    Three-dimensional input is converted to a singleton 4D image.
+    Existing 4D input must contain exactly one volume.
+
+    Parameters
+    ----------
+    value : Niimg-like
+        Image representing a single state.
+    name : str
+        Parameter name used in error messages.
+
+    Returns
+    -------
+    Niimg-like
+        Validated 4D image containing exactly one state.
+
+    Raises
+    ------
+    ValueError
+        If the image contains more than one state.
+    """
+    img = check_niimg(value,atleast_4d=True)
+
+    if img.shape[3] != 1:
+        raise ValueError(
+            f"{name} must represent exactly one state; "
+            f"got image shape {img.shape}"
+        )
+
+    return img
+
+###############################################################################
+## Validation helpers for matrices
 ###############################################################################
 
 def _validate_2d_matrix_and_finite(value, name):
@@ -69,6 +111,30 @@ def _resolve_array_or_identity(value, n_nodes):
 
     return np.asarray(value)
 
+# TODO: should be renamed to:
+# _validate_symmetric_labels_if_dataframe
+def _validate_symmetric_dataframe_labels(obj, name):
+    """Validate node labels of a symmetric matrix DataFrame.
+
+    Parameters
+    ----------
+    obj : object
+        Matrix to validate. Non-DataFrame objects are ignored.
+    name : str
+        Name of the matrix used in error messages.
+
+    Raises
+    ------
+    ValueError
+        If the matrix is a DataFrame and its index and column labels
+        do not match.
+    """
+    if isinstance(obj, pd.DataFrame):
+        if not obj.index.equals(obj.columns):
+            raise ValueError(
+                f"{name} must have matching index and column labels."
+            )
+
 def _validate_same_shape(arrays, names):
     """Validate that all arrays have the same shape."""
     shapes = {
@@ -86,6 +152,52 @@ def _validate_same_shape(arrays, names):
             f"{', '.join(names)} must have the same shape; "
             f"got {formatted_shapes}"
         )
+
+def _validate_A(A):
+    """Validate an adjacency matrix."""
+    _validate_square_matrix(A, "A")
+    _validate_symmetric_dataframe_labels(A, "A")
+
+def _resolve_A(A):
+    """Resolve an adjacency matrix to a NumPy array."""
+    return np.asarray(A)
+
+def _validate_B(B):
+    """Validate a control input matrix."""
+    _validate_square_matrix_or_identity(B, "B")
+    _validate_symmetric_dataframe_labels(B, "B")
+
+def _resolve_B(B, n_nodes):
+    """Resolve a control input matrix to a NumPy array."""
+    return _resolve_array_or_identity(B, n_nodes)
+
+def _validate_S(S, energy_type):
+    """Validate S for the selected energy type."""
+    if energy_type == "minimal":
+        if S is not None:
+            raise ValueError(
+                "S must be None when energy_type='minimal'."
+            )
+
+    elif energy_type == "optimal":
+        if S is None:
+            raise ValueError(
+                "S must have a value when energy_type='optimal'."
+            )
+
+        _validate_square_matrix_or_identity(S, "S")
+        _validate_symmetric_dataframe_labels(S, "S")
+
+def _resolve_S(S, energy_type, n_nodes):
+    """Resolve S to the value required by nctpy."""
+    if energy_type == "minimal":
+        return np.zeros((n_nodes, n_nodes))
+
+    return _resolve_array_or_identity(S, n_nodes)
+
+###############################################################################
+## Validation helpers for single parameters
+###############################################################################
 
 def _validate_choice(value, name, choices):
     """Validate an enumerated option."""
@@ -107,8 +219,9 @@ def _validate_boolean(value, name):
             f"{name} must be a boolean"
         )
 
+# TODO: Should be renamed _validate_positive_real_number
 def _validate_positive_real(value, name):
-    """Validate that input is a positive finite real number."""
+    """Validate that input is a positive & finite real number."""
     if (
         isinstance(value, (bool, np.bool_))
         or not isinstance(
@@ -123,21 +236,6 @@ def _validate_positive_real(value, name):
     if not np.isfinite(value) or value <= 0:
         raise ValueError(
             f"{name} must be a positive finite number"
-        )
-
-def _validate_rho(rho):
-    """Validate the mixing parameter for optimal control."""
-    if (
-        isinstance(rho, (bool, np.bool_))
-        or not isinstance(rho, (float, np.floating))
-    ):
-        raise TypeError(
-            "rho must be a float"
-        )
-
-    if not np.isfinite(rho) or not 0 < rho <= 1:
-        raise ValueError(
-            "rho must be a positive finite float between 0 and 1"
         )
 
 def _validate_time_horizon(T, system):
@@ -163,415 +261,247 @@ def _validate_time_horizon(T, system):
         raise TypeError(
             "T must be a float for a continuous system"
         )
-
-# TODO: Split up into validation part and resolving part
-# Validation part should just check if the combination of inputs is valid
-# Resolving part should actually resolve the input based on energy_type
-# TODO: It's also confusing that xr is only validated but not returned here.
-def _resolve_energy_type_parameters(
-    rho,
-    S,
-    energy_type,
-    n_nodes,
-    xr,
-):
-    """Validate and resolve parameters that depend on energy type.
-
-    For minimal-energy control, ``rho``, ``S``, and ``xr`` must be ``None``.
-    ``rho`` and ``S`` are resolved to the values required internally by nctpy.
-
-    For optimal control, ``rho``, ``S``, and ``xr`` must be provided.
-
-    Parameters
-    ----------
-    rho : float or None
-        Mixing parameter.
-    S : array-like, "identity", or None
-        State-trajectory constraint matrix.
-    energy_type : {"minimal", "optimal"}
-        Type of control energy.
-    n_nodes : int
-        Number of network nodes.
-    xr : object or None
-        Reference-state input. Its concrete state representation is validated
-        by :func:`_resolve_state_input`.
-
-    Returns
-    -------
-    rho : float
-        Resolved mixing parameter.
-    S : ndarray of shape (n_nodes, n_nodes)
-        Resolved state-trajectory constraint matrix.
-    """
-    
+        
+def _validate_rho(rho, energy_type):
+    """Validate rho for the selected energy type."""
     if energy_type == "minimal":
-        if rho is not None or S is not None:
+        if rho is not None:
             raise ValueError(
-                "rho and S must both be None when "
-                "energy_type='minimal'"
+                "rho must be None when energy_type='minimal'."
             )
-
-        if xr is not None:
-            raise ValueError(
-                "xr must be None when energy_type='minimal'"
-            )
-
-        # nctpy requires a positive rho internally even when S is zero.
-        rho = 1.0
-        S = np.zeros((n_nodes,n_nodes))
 
     elif energy_type == "optimal":
-        if rho is None or S is None:
+        if rho is None:
             raise ValueError(
-                "rho and S must both be provided when "
-                "energy_type='optimal'"
+                "rho must have a value when energy_type='optimal'."
             )
 
-        if xr is None:
-            raise ValueError(
-                "xr must be provided when energy_type='optimal'"
+        if not isinstance(rho, (float, np.floating)):
+            raise TypeError(
+                "rho must be a float."
             )
 
-        _validate_rho(rho)
-        _validate_square_matrix_or_identity(S,"S",)
-        S = _resolve_array_or_identity(S,n_nodes,)
+        _validate_positive_real(rho, "rho")
 
-    return rho, S
+        if rho > 1.0:
+            raise ValueError(
+                "rho must be less than or equal to 1."
+            )
 
+def _resolve_rho(rho, energy_type):
+    """Resolve rho to the value required by nctpy."""
+    if energy_type == "minimal":
+        # nctpy requires positive rho even when S is zero.
+        return 1.0
+
+    return rho
 
 ###############################################################################
-## Validation helpers to check state input(s)
+## Validation helpers for state-like input
 ###############################################################################
+        
+def _validate_xr(xr,energy_type):
+    """Validate a named reference, one Niimg-like state, or an (N, 1) array.
+    An array must contain numeric, finite values. An image must contain
+    exactly one state. Valid input produces no return value.
+    
+    Note that this function is only called when energy_type = 'optimal'
+    
+    """
+    
+    if energy_type == 'minimal':
+        if xr is not None:
+            raise ValueError("xr must be None when energy_type is `minimal`")
+    
+    elif energy_type == 'optimal':
+    
+        if isinstance(xr, str) and xr in ("zero", "x0", "xf", "midpoint"):
+            return
+        
+        if _is_niimg_like(xr):
+            _validate_single_state_niimg(xr,"xr")
+    
+        if isinstance(xr, np.ndarray):
+            if xr.ndim != 2 or xr.shape[1] != 1:
+                raise ValueError(f"xr must have shape (N, 1); got {xr.shape}")
+            if not np.issubdtype(xr.dtype, np.number):
+                raise TypeError("xr must contain numeric values")
+            if not np.all(np.isfinite(xr)):
+                raise ValueError("xr must contain only finite values")
+    
+        else:
+            raise TypeError(
+                "xr must be 'zero', 'x0', 'xf', 'midpoint', "
+                "a single Niimg-like object, or a NumPy array of shape (N, 1)"
+                "when energy_type is ``optimal``"
+            )
 
-# TODO: Wonder if we could profit from:
-# https://pandas.pydata.org/docs/reference/api/pandas.api.types.is_list_like.html#pandas-api-types-is-list-like
-# The general idea of this function is:
-# It's either a single Niimg-like object or a collection of niimg-like objects (which will require a masker in the downstream),
-# OR it's a list,tuple,pd.Series,nd.array,pd.DataFrame that does NOT contain any niimg-like objects
-# NOTE: Maybe it's also smart to have nested if-else: The first statement just checks if it's a single object 
-# or a list-like object, and the second statement checks if it's niimg-like or a list-like-niimg-like?
-def _is_niimg_or_tabular_like(value):
-    """Determine whether input is Niimg-like or tabular-like.
+def _validate_transition_states(X=None, X0=None, Xf=None):
+    """Validate transition-state inputs.
 
-    Niimg-like input includes:
-
-    - Any individual object whose type is included in Nilearn's ``NiimgLike`` type alias.
-    - A non-empty list, tuple, or pandas Series whose elements are all Niimg-like objects.
-
-    Tabular-like input includes:
-
-    - NumPy arrays.
-    - pandas DataFrames.
-    - pandas Series that are not collections of Niimg-like objects.
-    - Lists or tuples that are not collections of Niimg-like objects.
-
-    Niimg-like input is validated with
-    :func:`nilearn.image.check_niimg`. Genuine image-validation errors,
-    such as incompatible shapes or fields of view, are propagated rather
-    than treating the input as tabular-like.
+    Either ``X`` must be provided alone, or ``X0`` and ``Xf`` must
+    both be provided.
 
     Parameters
     ----------
-    value : object
-        Input to classify.
+    X : object, optional
+        Full sequence of states.
+    X0, Xf : object, optional
+        Initial and final state sets.
 
-    Returns
-    -------
-    {"niimg_like", "tabular_like"}
-        Classification of the input.
+    Raises
+    ------
+    ValueError
+        If the input combination or node labels are invalid.
+    """
+
+    # X cannot be combined with X0 or Xf.
+    if X is not None and (X0 is not None or Xf is not None):
+        raise ValueError(
+            "Provide either X or X0 and Xf, not both."
+        )
+
+    # At least one transition representation must be provided.
+    if X is None and X0 is None and Xf is None:
+        raise ValueError(
+            "Provide either X or both X0 and Xf."
+        )
+
+    # X0 and Xf must always be provided together.
+    if X is None and (X0 is None or Xf is None):
+        raise ValueError(
+            "X0 and Xf must be provided together."
+        )
+
+def _validate_state_array(value, name):
+    """Validate an array-like state object.
+
+    Parameters
+    ----------
+    value : array-like
+        State object to validate. Supported types include lists, tuples,
+        NumPy arrays, pandas Series, and pandas DataFrames. The state-object
+        must be either 1D (rows represent nodes) or 2D (columns represent nodes)
+    name : str
+        Name of the state object used in error messages.
 
     Raises
     ------
     TypeError
-        If the input is neither Niimg-like nor tabular-like.
+        If the input is not a supported array-like object.
     ValueError
-        If Niimg-like input fails Nilearn validation.
+        If the input is not 1D or 2D, or contains non-finite values.
     """
-    niimg_types = get_args(NiimgLike)
-
-    # Single Niimg-like object.
-    if isinstance(value, niimg_types):
-        check_niimg(value)
-        return "niimg_like"
-
-    # Collection input.
-    if isinstance(value, (list, tuple, pd.Series)):
-        if len(value) > 0 and all(
-            isinstance(item, niimg_types)
-            for item in value
-        ):
-            check_niimg(list(value))
-            return "niimg_like"
-
-        return "tabular_like"
-
-    # Other tabular input.
-    if isinstance(value, (np.ndarray, pd.DataFrame)):
-        return "tabular_like"
-
-    raise TypeError(
-        "Input must be a Niimg-like or tabular-like object"
+    array_like_types = (
+        list,
+        tuple,
+        np.ndarray,
+        pd.Series,
+        pd.DataFrame,
     )
 
-def _resolve_single_state_niimg(value, name):
-    """Resolve Niimg-like input representing exactly one state.
+    if not isinstance(value, array_like_types):
+        raise TypeError(
+            f"{name} must be a 1D/2D array-like object."
+        )
 
-    Three-dimensional input is converted to a singleton 4D image.
-    Existing 4D input must contain exactly one volume.
+    state_array = np.asarray(value)
+
+    if state_array.ndim not in (1, 2):
+        raise ValueError(
+            f"{name} must be 1D or 2D, "
+            f"got {state_array.ndim}D with shape "
+            f"{state_array.shape}."
+        )
+
+    if not np.all(np.isfinite(state_array)):
+        raise ValueError(
+            f"{name} must contain only finite values."
+        )
+
+###############################################################################
+## Validation helpers for node-objects (includes matrices and states)
+###############################################################################
+
+def _validate_node_counts(node_counts):
+    """Validate that all defined node counts are equal.
 
     Parameters
     ----------
-    value : Niimg-like
-        Image representing a single state.
-    name : str
-        Parameter name used in error messages.
-
-    Returns
-    -------
-    Niimg-like
-        Validated 4D image containing exactly one state.
+    node_counts : dict
+        Mapping of node-object names to node counts. Values may be integers
+        or None. None values are ignored when comparing node counts.
 
     Raises
     ------
     ValueError
-        If the image contains more than one state.
+        If the defined node counts are not all equal.
     """
-    img = check_niimg(
-        value,
-        atleast_4d=True,
-    )
+    counts = {
+        name: count
+        for name, count in node_counts.items()
+        if count is not None
+    }
 
-    if img.shape[3] != 1:
+    unique_counts = set(counts.values())
+
+    if len(unique_counts) > 1:
         raise ValueError(
-            f"{name} must represent exactly one state; "
-            f"got image shape {img.shape}"
+            "All state inputs must have the same number of nodes. "
+            f"Got {counts}."
         )
 
-    return img
-
-# NOTE: Might be smart to split this up in the future for readability reasons
-# NOTE: Might make sense to also split this up into validation part and resolving part?
-# NOTE: Might make sense to handle xr in a separate function?
-def _resolve_state_input(X=None, x0=None, xf=None, xr="xf"):
-    """Validate and resolve transition and reference state input.
-
-    States are represented by rows and nodes by columns for tabular input,
-    and by volumes along the fourth dimension for Niimg-like input.
-
-    Exactly one of the following must be provided:
-
-    - ``X`` containing one or more states.
-    - ``x0`` and ``xf`` containing exactly one state each.
-
-    Tabular input may be provided as a NumPy array, pandas DataFrame,
-    pandas Series, list, or tuple. Lists, tuples, and Series containing
-    exclusively Niimg-like objects are instead treated as Niimg-like
-    collections.
-
-    Tabular input is returned as a pandas DataFrame with shape
-    ``(n_states, n_nodes)``. Niimg-like input is returned as a 4D image with
-    one volume per state.
+def _get_node_labels(obj):
+    """Return node labels if available.
 
     Parameters
     ----------
-    X : array-like, DataFrame, or Niimg-like, optional
-        State input containing one or more states.
-    x0 : array-like, Series, or Niimg-like, optional
-        Initial state.
-    xf : array-like, Series, or Niimg-like, optional
-        Final state.
-    xr : {"zero", "x0", "xf", "midpoint"}, array-like, Series, \
-            Niimg-like, or None, default="xf"
-        Reference state. ``None`` is reserved for minimal-energy control.
+    obj : object
+        Object from which to extract node labels. For a 1D object the node
+        labels are the indices, for a 2D object the node labels are the columns
 
     Returns
     -------
-    X_resolved : pd.DataFrame, Niimg-like or NumPy array
-        Resolved state input.
-    X_type : {"tabular_like", "niimg_like"}
-        Type of the resolved state input.
-    xr_resolved : str, ndarray, Series, Niimg-like, or None
-        Validated reference state.
-    xr_type : {"named", "tabular_like", "niimg_like", None}
-        Type of the resolved reference state.
-    node_labels_inferred : pandas.Index or None
-        Node labels inferred from labelled tabular state input. Unlabelled
-        arrays and image-like input return ``None``; image labels are not
-        available until a masker has been fitted.
+    pandas.Index or None
+        Node labels if the object provides them, otherwise None.
     """
-    
-    # check incompatible inputs
-    endpoints_provided = x0 is not None or xf is not None
+    if isinstance(obj, pd.Series):
+        return obj.index
 
-    if X is not None and endpoints_provided:
-        raise ValueError(
-            "Provide either X or x0 and xf, not both"
-        )
+    if isinstance(obj, pd.DataFrame):
+        return obj.columns
 
-    if X is None and x0 is None and xf is None:
-        raise ValueError(
-            "Provide either X or both x0 and xf"
-        )
+    return None
 
-    # X contains all states.
-    if X is not None:
-        
-        X_type = _is_niimg_or_tabular_like(X)
+def _validate_node_labels(node_labels):
+    """Validate that all defined node labels are equal.
 
-        # X is niimg-like
-        if X_type == "niimg_like":
-            if isinstance(X, pd.Series):
-                X = X.tolist()
+    Parameters
+    ----------
+    node_labels : dict
+        Mapping of node-object names to node labels. Values may be pandas
+        Index objects or None. None values are ignored when comparing labels.
 
-            X_resolved = check_niimg(X,atleast_4d=True)
-            node_labels_inferred = None
+    Raises
+    ------
+    ValueError
+        If any defined node labels do not match.
+    """
+    labels = {
+        name: label
+        for name, label in node_labels.items()
+        if label is not None
+    }
 
-        # X is dataframe
-        elif isinstance(X, pd.DataFrame):
-            _validate_2d_matrix_and_finite(X,"X")
-            
-            X_resolved = X.copy()
-            node_labels_inferred = X_resolved.columns
+    label_items = list(labels.items())
 
-        # X is array-like
-        else:
-            X_array = np.asarray(X)
-            _validate_2d_matrix_and_finite(X_array,"X",)
-            X_resolved = pd.DataFrame(X_array.copy())
-            node_labels_inferred = None
-
-    else:
-        # x0 and xf must be provided together.
-        if x0 is None or xf is None:
-            raise ValueError(
-                "x0 and xf must be provided together"
-            )
-
-        # x0 and xf must have the same type
-        x0_type = _is_niimg_or_tabular_like(x0)
-        xf_type = _is_niimg_or_tabular_like(xf)
-
-        if x0_type != xf_type:
-            raise TypeError("x0 and xf must use the same input type")
-
-        # Niimg-like endpoints.
-        if x0_type == "niimg_like":
-            x0_img = _resolve_single_state_niimg(x0,"x0")
-            xf_img = _resolve_single_state_niimg(xf,"xf")
-            X_resolved = concat_imgs([x0_img, xf_img])
-            X_type = "niimg_like"
-            node_labels_inferred = None
-
-        else:
-            # Tabular endpoints must use the same concrete representation.
-            if type(x0) is not type(xf):
-                raise TypeError("x0 and xf must use the same input type")
-
-            # Preserve Series node labels.
-            if isinstance(x0, pd.Series):
-                if not x0.index.equals(xf.index):
-                    raise ValueError("x0 and xf must have matching indices")
-
-                if x0.dtype != xf.dtype:
-                    raise TypeError("x0 and xf must have the same dtype")
-
-                if (
-                    not np.all(np.isfinite(x0))
-                    or not np.all(np.isfinite(xf))
-                ):
-                    raise ValueError("x0 and xf must contain only finite values")
-
-                X_resolved = pd.DataFrame(
-                    [x0.to_numpy(), xf.to_numpy()],
-                    columns=x0.index,
-                )
-                node_labels_inferred = X_resolved.columns
-
-            else:
-                # Resolve NumPy/list/tuple endpoints.
-                x0_array = np.asarray(x0)
-                xf_array = np.asarray(xf)
-
-                if x0_array.ndim != 1 or xf_array.ndim != 1:
-                    raise ValueError("x0 and xf must be one-dimensional states")
-
-                if x0_array.shape != xf_array.shape:
-                    raise ValueError("x0 and xf must contain the same number of nodes")
-
-                if x0_array.dtype != xf_array.dtype:
-                    raise TypeError("x0 and xf must have the same dtype")
-
-                if (
-                    not np.all(np.isfinite(x0_array))
-                    or not np.all(np.isfinite(xf_array))
-                ):
-                    raise ValueError(
-                        "x0 and xf must contain only finite values"
-                    )
-
-                X_resolved = pd.DataFrame(
-                    np.stack((x0_array, xf_array))
-                )
-                node_labels_inferred = None
-
-            X_type = "tabular_like"
-
-    # Resolve the reference state alongside all other state inputs.
-    if xr is None:
-        xr_resolved = None
-        xr_type = None
-
-    elif isinstance(xr, str) and xr in ("zero", "x0", "xf", "midpoint"):
-        xr_resolved = str(xr)
-        xr_type = "named"
-
-    else:
-        try:
-            xr_type = _is_niimg_or_tabular_like(xr)
-        except (TypeError, ValueError) as error:
-            if isinstance(xr, str):
+    for i, (name_a, labels_a) in enumerate(label_items):
+        for name_b, labels_b in label_items[i + 1:]:
+            if not labels_a.equals(labels_b):
                 raise ValueError(
-                    "xr must be one of 'zero', 'x0', 'xf', 'midpoint' "
-                    "or a valid Niimg-like path"
-                ) from error
-            raise
-
-        if xr_type == "niimg_like":
-            xr_resolved = _resolve_single_state_niimg(xr, "xr")
-
-        else:
-            if isinstance(xr, pd.DataFrame):
-                raise TypeError(
-                    "xr must be a vector, list, tuple, pandas Series, "
-                    "or compatible reference image"
+                    "Node labels must match across all inputs. "
+                    f"{name_a} and {name_b} have different node labels."
                 )
-
-            xr_array = np.asarray(xr)
-            if xr_array.ndim == 2 and xr_array.shape[1] == 1:
-                xr_array = xr_array[:, 0]
-            elif xr_array.ndim != 1:
-                raise ValueError(
-                    "xr must be one-dimensional or a column vector"
-                )
-
-            if not np.issubdtype(xr_array.dtype, np.number):
-                raise TypeError("xr must contain numeric values")
-
-            if not np.all(np.isfinite(xr_array)):
-                raise ValueError("xr must contain only finite values")
-
-            if isinstance(xr, pd.Series):
-                xr_resolved = xr.copy()
-            else:
-                xr_resolved = xr_array.copy()
-
-    return (
-        X_resolved,
-        X_type,
-        xr_resolved,
-        xr_type,
-        node_labels_inferred,
-    )
 
 # FIXME: _validate functions should never return anything
 def _validate_transition_order(n_states, order):

@@ -9,42 +9,7 @@ Utilities for input-output operations
 import numpy as np
 import pandas as pd
 from collections.abc import Mapping
-from .validation import _validate_choice
-from itertools import combinations, permutations, product
 import xarray as xr
-
-# TODO: Find more suitable names for order choices
-def _set_transition_order(n_states, order):
-    """Return the number and indices of requested state transitions.
-
-    Each transition tuple contains ``(transition, source, target)``.  The
-    ordering matches the corresponding iterator in :mod:`itertools`.
-    """
-    
-    if not isinstance(n_states, (int, np.integer)) or isinstance(n_states, bool):
-        raise TypeError("n_states must be an integer")
-    if n_states < 1:
-        raise ValueError("n_states must be at least 1")
-        
-    indices = range(n_states)
-    
-    if order == "permutations":
-        pairs = permutations(indices, r=2)
-    elif order == "combinations":
-        pairs = combinations(indices, r=2)
-    elif order == "product":
-        pairs = product(indices, repeat=2)
-    else:
-        pairs = ((index, index) for index in indices)
-
-    transition_indices = [
-        (transition, source, target)
-        for transition, (source, target) in enumerate(pairs)
-    ]
-    
-    n_transitions = len(transition_indices)
-    
-    return n_transitions, transition_indices
 
 def _coerce_labels(labels, expected_length, parameter_name):
     """Convert and validate labels as a pandas Index or MultiIndex.
