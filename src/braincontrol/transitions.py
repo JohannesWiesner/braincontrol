@@ -599,6 +599,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             else:
                 _validate_state_array(state_object,name)
                 
+                # TODO: Make function out of this, e.g. get_number_of_nodes
                 state_array = np.asarray(state_object)
     
                 if state_array.ndim == 1:
@@ -882,6 +883,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     )
     
     # TODO: Work on state_labels
+    # TODO: I think the transitions argument is better off in init, see issue #7
     def transform(
         self,
         A,
