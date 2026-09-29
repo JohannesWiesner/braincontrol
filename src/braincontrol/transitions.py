@@ -32,7 +32,10 @@ from braincontrol.utils.validation import (
     _validate_node_counts,
     _validate_state_array,
     _get_node_labels,
-    _validate_node_labels
+    _validate_node_labels,
+    _get_n_nodes_from_schema,
+    _get_node_labels_from_schema,
+    _validate_transform_node_labels
 )
 
 from nctpy.energies import get_control_inputs, integrate_u
@@ -44,113 +47,253 @@ from nilearn.maskers import BaseMasker
 from nctpy.utils import matrix_normalization
 
 ###############################################################################
-## functions
+## Functions
 ###############################################################################
 
-# TODO: Find more suitable names for order choices
-# TODO: Should also work with separate X0 and Xf (assuming that they are later concatenated)
-def _set_transition_order(n_states, order):
-    """Return the number and indices of requested state transitions.
+def _get_transition_indices(
+    n_states,
+    transitions,
+    *,
+    n_initial_states=None,
+):
+    """Return indices for the requested state transitions.
 
-    Each transition tuple contains ``(transition, source, target)``.  The
-    ordering matches the corresponding iterator in :mod:`itertools`.
+    Parameters
+    ----------
+    n_states : int
+        Total number of states.
+
+    transitions : {
+        "directed",
+        "undirected",
+        "directed_with_self",
+        "self",
+        "all_to_all",
+        "paired",
+    }
+        Strategy used to select state transitions.
+
+        When a single set of states ``X`` is provided:
+
+        - ``"directed"`` computes every directed transition between
+          distinct states.
+        - ``"undirected"`` computes one transition for each pair of
+          distinct states.
+        - ``"directed_with_self"`` computes every directed transition,
+          including self-transitions.
+        - ``"self"`` computes only self-transitions.
+
+        When separate initial and final state sets ``X0`` and ``Xf`` are
+        provided:
+
+        - ``"all_to_all"`` computes every transition from a state in
+          ``X0`` to a state in ``Xf``.
+        - ``"paired"`` computes transitions between corresponding states
+          in ``X0`` and ``Xf``.
+
+    n_initial_states : int or None, default=None
+        Number of initial states when ``n_states`` represents concatenated
+        ``X0`` and ``Xf``. If None, ``n_states`` is assumed to describe a
+        single state set ``X``.
+
+    Returns
+    -------
+    transition_indices : list of tuple
+        Transition indices represented as
+        ``(transition, source, target)``.
     """
-    
-    if not isinstance(n_states, (int, np.integer)) or isinstance(n_states, bool):
-        raise TypeError("n_states must be an integer")
-    if n_states < 1:
-        raise ValueError("n_states must be at least 1")
-        
-    indices = range(n_states)
-    
-    if order == "permutations":
-        pairs = permutations(indices, r=2)
-    elif order == "combinations":
-        pairs = combinations(indices, r=2)
-    elif order == "product":
-        pairs = product(indices, repeat=2)
-    else:
-        pairs = ((index, index) for index in indices)
+    if not isinstance(n_states, (int, np.integer)) or isinstance(
+        n_states,
+        bool,
+    ):
+        raise TypeError(
+            "n_states must be an integer."
+        )
 
-    transition_indices = [
+    if n_states < 1:
+        raise ValueError(
+            "n_states must be at least 1."
+        )
+
+    # Transitions within a single state set.
+    if n_initial_states is None:
+        _validate_choice(
+            transitions,
+            "transitions",
+            (
+                "directed",
+                "undirected",
+                "directed_with_self",
+                "self",
+            ),
+        )
+
+        indices = range(n_states)
+
+        if transitions == "directed":
+            pairs = permutations(
+                indices,
+                r=2,
+            )
+
+        elif transitions == "undirected":
+            pairs = combinations(
+                indices,
+                r=2,
+            )
+
+        elif transitions == "directed_with_self":
+            pairs = product(
+                indices,
+                repeat=2,
+            )
+
+        else:
+            pairs = (
+                (index, index)
+                for index in indices
+            )
+
+    # Transitions from initial to final state sets.
+    else:
+        if (
+            not isinstance(n_initial_states, (int, np.integer))
+            or isinstance(n_initial_states, bool)
+        ):
+            raise TypeError(
+                "n_initial_states must be an integer."
+            )
+
+        if not 1 <= n_initial_states < n_states:
+            raise ValueError(
+                "n_initial_states must be at least 1 and smaller "
+                "than n_states."
+            )
+
+        _validate_choice(
+            transitions,
+            "transitions",
+            (
+                "all_to_all",
+                "paired",
+            ),
+        )
+
+        n_final_states = n_states - n_initial_states
+
+        initial_indices = range(
+            n_initial_states
+        )
+        final_indices = range(
+            n_initial_states,
+            n_states,
+        )
+
+        if transitions == "all_to_all":
+            pairs = product(
+                initial_indices,
+                final_indices,
+            )
+
+        else:
+            if n_initial_states != n_final_states:
+                raise ValueError(
+                    "X0 and Xf must contain the same number of states "
+                    "when transitions='paired'."
+                )
+
+            pairs = zip(
+                initial_indices,
+                final_indices,
+            )
+
+    return [
         (transition, source, target)
         for transition, (source, target) in enumerate(pairs)
     ]
-    
-    n_transitions = len(transition_indices)
-    
-    return n_transitions, transition_indices
 
+# TODO: Make more memory efficient by predefining empty arrays that have
+# n_transitions x n_timepoints x n_nodes. See old implementation:
+#     # TODO: This should be exposed by nctpy! 0.001 is hardcoded for now, but it would be better if we could import STEP from nctpy so we always use nctpy as origin 
+#     if system == "continuous":
+#         n_state_time_points = int(np.round(T / 0.001) + 1)
+#         n_control_time_points = n_state_time_points
+#     else:
+#         n_state_time_points = T + 1
+#         n_control_time_points = T
+# TODO: Make more computaionally efficient by using parallelization. 
 def get_transition_trajectories(
     A,
     X,
+    transition_indices,
     T,
     B,
     rho,
     S,
-    order,
     *,
     system="continuous",
     xr="xf",
     expm_version="scipy",
 ):
-    """Compute state and control trajectories from prevalidated inputs.
+    """Compute state and control trajectories for state transitions.
 
     Parameters
     ----------
     A : ndarray of shape (n_nodes, n_nodes)
-        A validated, normalized adjacency matrix.
+        Adjacency matrix.
+
     X : ndarray of shape (n_states, n_nodes)
-        Validated state matrix with one state per row.
+        State matrix.
+
+    transition_indices : list of tuple
+        State transitions represented as
+        ``(transition, source, target)``.
+
     T : float or int
         Time horizon.
+
     B : ndarray of shape (n_nodes, n_nodes)
-        Validated control input matrix.
+        Control input matrix.
+
     rho : float
-        Mixing parameter used by :func:`nctpy.energies.get_control_inputs`.
+        State-trajectory constraint parameter.
+
     S : ndarray of shape (n_nodes, n_nodes)
-        Validated state-trajectory constraint matrix.
-    order : {"combinations", "permutations", "product", "stability"}
-        State-pair selection and ordering.
+        State-trajectory constraint matrix.
+
     system : {"continuous", "discrete"}, default="continuous"
-        Time system used for the control computation.
-    xr : array-like or str, default="xf"
-        Reference state passed to ``nctpy``.
+        System dynamics.
+
+    xr : {"xf", "zero"} or ndarray, default="xf"
+        Reference state.
+
     expm_version : {"scipy", "eig"}, default="scipy"
-        Matrix-exponential implementation used by ``nctpy``.
+        Matrix exponential implementation.
 
     Returns
     -------
-    state_trajectories : ndarray
-        State trajectories with shape
-        ``(n_state_time_points, n_nodes, n_transitions)``.
-    control_trajectories : ndarray
-        Control trajectories with shape
-        ``(n_control_time_points, n_nodes, n_transitions)``.
+    state_trajectories : list of ndarray
+        State trajectory for each transition.
+
+    control_trajectories : list of ndarray
+        Control trajectory for each transition.
+
     errors : ndarray of shape (n_transitions, 2)
-        Numerical errors reported by ``nctpy`` for each transition.
+        Numerical errors for all transitions.
     """
-    
-    # TODO: might be better if this would be done in _set_transition_order
-    # so this function only receives the indices
-    n_transitions, transition_indices = _set_transition_order(X.shape[0],order)
-    n_nodes = X.shape[1]
 
-    # TODO: This should be exposed by nctpy! 0.001 is hardcoded for now, but it would be better if we could import STEP from nctpy so we always use nctpy as origin 
-    if system == "continuous":
-        n_state_time_points = int(np.round(T / 0.001) + 1)
-        n_control_time_points = n_state_time_points
-    else:
-        n_state_time_points = T + 1
-        n_control_time_points = T
+    n_transitions = len(transition_indices)
 
-    state_trajectories = np.empty((n_state_time_points, n_nodes, n_transitions),dtype=float)
-    control_trajectories = np.empty((n_control_time_points, n_nodes, n_transitions),dtype=float)
-    errors = np.empty((n_transitions, 2),dtype=float)
+    state_trajectories = []
+    control_trajectories = []
+    errors = np.zeros((n_transitions, 2))
 
     for transition, source, target in transition_indices:
-        
-        state_trajectory, control_trajectory, error = get_control_inputs(
+        (
+            state_trajectory,
+            control_trajectory,
+            error,
+        ) = get_control_inputs(
             A_norm=A,
             T=T,
             B=B,
@@ -163,21 +306,45 @@ def get_transition_trajectories(
             expm_version=expm_version,
         )
 
-        state_trajectories[:, :, transition] = state_trajectory
-        control_trajectories[:, :, transition] = control_trajectory
+        state_trajectories.append(state_trajectory)
+        control_trajectories.append(control_trajectory)
         errors[transition] = error
 
-    return state_trajectories, control_trajectories, errors
+    return (
+        state_trajectories,
+        control_trajectories,
+        errors,
+    )
 
 def get_transition_energy(control_trajectories):
-    """Integrate control trajectories for every transition."""
-    
-    n_nodes, n_transitions = control_trajectories.shape[1:]
-    energies = np.empty((n_transitions, n_nodes))
-    
-    for transition in range(n_transitions):
-        energies[transition] = integrate_u(control_trajectories[:, :, transition])
-        
+    """Integrate control trajectories for every transition.
+
+    Parameters
+    ----------
+    control_trajectories : list of ndarray
+        Control trajectories for all transitions. Each element has shape
+        (n_timepoints, n_nodes).
+
+    Returns
+    -------
+    energies : ndarray of shape (n_transitions, n_nodes)
+        Integrated control energy for each transition and node.
+    """
+
+    n_transitions = len(control_trajectories)
+    n_nodes = control_trajectories[0].shape[1]
+
+    energies = np.empty(
+        (n_transitions, n_nodes)
+    )
+
+    for transition, control_trajectory in enumerate(
+        control_trajectories
+    ):
+        energies[transition] = integrate_u(
+            control_trajectory
+        )
+
     return energies
 
 ###############################################################################
@@ -378,7 +545,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             ["A", "B", "S"],
         )
     
-    def _fit_transform_masker(self, imgs):
+    def _transform_niimg(self, imgs):
         """Fit and apply a masker to Niimg-like input.
     
         Parameters
@@ -417,23 +584,17 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         """Validate state inputs and fit state-related metadata."""
     
         # Validate state-input configuration.
-        _validate_transition_states(
-            X,
-            X0,
-            Xf,
-        )
-        _validate_xr(
-            xr,
-            self.energy_type_,
-        )
+        _validate_transition_states(X,X0,Xf)
+        _validate_xr(xr,self.energy_type_)
     
+        # now check every object and store the number of nodes and node labels
         for name, state_object in zip(
             ["X", "X0", "Xf", "xr"],
             [X, X0, Xf, xr],
         ):
             # Convert Niimg-like inputs to their state representation.
             if _is_niimg_like(state_object):
-                state_object = self._fit_transform_masker(
+                state_object = self._transform_niimg(
                     state_object
                 )
     
@@ -442,11 +603,8 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 n_nodes = None
     
             else:
-                _validate_state_array(
-                    state_object,
-                    name,
-                )
-    
+                _validate_state_array(state_object,name)
+                
                 state_array = np.asarray(state_object)
     
                 if state_array.ndim == 1:
@@ -486,7 +644,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             Initial-state input.
         Xf : array-like, Niimg-like, or None, default=None
             Final-state input.
-        xr : array-like, str, or None, default="xf"
+        xr : array-like, Niimg-like, str, or None, default="xf"
             Reference state.
     
         Returns
@@ -527,220 +685,345 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         )
     
         # Validate the complete node schema.
+        # FIXME: At this point it would be nice to have n_nodes as one number,
+        # after validation has been done
         _validate_node_counts(
             self.n_nodes_
         )
+        
+        # FIXME: At this point it would be nice to have node_labels as one arrays
+        # after validation has been done (otherwise store node_label_dict and node_labels separately)
         _validate_node_labels(
             self.node_labels_
         )
     
         return self
 
-
+    def _transform_states(
+        self,
+        X,
+        X0,
+        Xf,
+        xr,
+    ):
+        """Validate and transform state inputs for NCT computation."""
     
-    # def transform(
-    #     self,
-    #     X=None,
-    #     *,
-    #     X0=None,
-    #     xf=None,
-    #     xr_override=None,
-    #     state_labels=None,
-    #     order="permutations",
-    # ):
-    #     """Return integrated control energy with shape transitions by nodes.
+        _validate_transition_states(X, X0, Xf)
+        _validate_xr(xr, self.energy_type_)
+    
+        node_counts = {}
+        node_labels = {}
         
-    #     xr_override : {"zero", "x0", "xf", "midpoint"}, array-like, Series, \
-    #             Niimg-like, or None, optional
-    #         Empirical reference state for these transitions. ``None`` uses
-    #         the instance reference configured during construction.
-    #     state_labels : list-like or MultiIndex-like, optional
-    #         Labels for states. When supplied, :meth:`transform` returns a DataFrame
-    #         whose row index identifies each transition endpoint. If omitted, 
-    #         labels are inferred from input.
-    #     order : {"combinations", "permutations", "product", "stability"}, \
-    #         default="permutations"
-    #         State-pair selection and ordering.
+        # FIXME: All of the following is too long. Try to resuse functions
+    
+        # Transform a single set of states.
+        if X is not None:
+            if _is_niimg_like(X):
+                X = self._transform_niimg(X)
+    
+            _validate_state_array(X, "X")
+    
+            node_labels["X"] = _get_node_labels(X)
+    
+            X = np.asarray(X)
+    
+            if X.ndim == 1:
+                X = X[np.newaxis, :]
+    
+            node_counts["X"] = X.shape[1]
+    
+            n_initial_states = None
+    
+        # Transform separate initial and final state sets.
+        else:
+            if _is_niimg_like(X0):
+                X0 = self._transform_niimg(X0)
+    
+            if _is_niimg_like(Xf):
+                Xf = self._transform_niimg(Xf)
+    
+            _validate_state_array(X0, "X0")
+            _validate_state_array(Xf, "Xf")
+    
+            node_labels["X0"] = _get_node_labels(X0)
+            node_labels["Xf"] = _get_node_labels(Xf)
+    
+            X0 = np.asarray(X0)
+            Xf = np.asarray(Xf)
+    
+            if X0.ndim == 1:
+                X0 = X0[np.newaxis, :]
+    
+            if Xf.ndim == 1:
+                Xf = Xf[np.newaxis, :]
+    
+            node_counts["X0"] = X0.shape[1]
+            node_counts["Xf"] = Xf.shape[1]
+    
+            n_initial_states = X0.shape[0]
+    
+            X = np.concatenate(
+                [X0, Xf],
+                axis=0,
+            )
+    
+        # Transform the reference state.
+        if xr is None or isinstance(xr, str):
+            node_counts["xr"] = None
+            node_labels["xr"] = None
+    
+        else:
+            if _is_niimg_like(xr):
+                xr = self._transform_niimg(xr)
+    
+            _validate_state_array(xr, "xr")
+    
+            node_labels["xr"] = _get_node_labels(xr)
+    
+            xr = np.asarray(xr)
+    
+            if xr.ndim == 2:
+                if xr.shape[0] != 1:
+                    raise ValueError(
+                        "xr must describe a single reference state."
+                    )
+    
+                xr = xr[0]
+    
+            node_counts["xr"] = xr.shape[0]
+    
+        return (
+            X,
+            xr,
+            n_initial_states,
+            node_counts,
+            node_labels,
+        )
+    
+    def _transform_matrices(
+        self,
+        A,
+        B,
+        S,
+    ):
+        """Validate and transform matrix inputs for NCT computation."""
+    
+        # Validate matrices.
+        _validate_A(A)
+        _validate_B(B)
+        _validate_S(S, self.energy_type_)
+    
+        # Extract node labels before resolving matrices.
+        node_labels = {
+            "A": _get_node_labels(A),
+            "B": _get_node_labels(B),
+            "S": _get_node_labels(S),
+        }
+    
+        # A determines the number of nodes used to resolve B and S.
+        n_nodes = A.shape[0]
+    
+        # Resolve matrices.
+        A = _resolve_A(A)
+        B = _resolve_B(B, n_nodes)
+        S = _resolve_S(
+            S,
+            self.energy_type_,
+            n_nodes,
+        )
+    
+        # Validate resolved matrix shapes.
+        _validate_same_shape(
+            [A, B, S],
+            ["A", "B", "S"],
+        )
+    
+        # Extract node counts from the resolved matrices.
+        node_counts = {
+            "A": A.shape[0],
+            "B": B.shape[0],
+            "S": S.shape[0],
+        }
+    
+        # Normalize the adjacency matrix used for NCT.
+        if self.normalize_A_:
+            A = matrix_normalization(
+                A,
+                self.system_,
+                self.c_,
+            )
+    
+        return A, B, S, node_counts, node_labels
+    
+    def _validate_transform_schema(
+        self,
+        node_counts,
+        node_labels,
+    ):
+        """Validate transform-time node schema against the fitted schema."""
+    
+        fitted_n_nodes = _get_n_nodes_from_schema(
+            self.n_nodes_
+        )
+        transform_n_nodes = _get_n_nodes_from_schema(
+            node_counts
+        )
+    
+        if transform_n_nodes != fitted_n_nodes:
+            raise ValueError(
+                f"Transform inputs contain {transform_n_nodes} nodes, "
+                f"but the fitted schema contains {fitted_n_nodes} nodes."
+            )
+    
+        fitted_node_labels = _get_node_labels_from_schema(
+            self.node_labels_
+        )
+        transform_node_labels = _get_node_labels_from_schema(
+            node_labels
+        )
+    
+        _validate_transform_node_labels(
+            fitted_node_labels,
+            transform_node_labels,
+    )
+    
+    # TODO: Work on state_labels
+    def transform(
+        self,
+        A,
+        B="identity",
+        S="identity",
+        xr="xf",
+        X=None,
+        X0=None,
+        Xf=None,
+        *,
+        transitions,
+        state_labels=None,
+    ):
+        """Compute control energy for state transitions."""
+    
+        check_is_fitted(
+            self,
+            attributes=[
+                "T_",
+                "rho_",
+                "energy_type_",
+                "system_",
+                "expm_version_",
+                "normalize_A_",
+                "c_",
+                "n_nodes_",
+                "node_labels_",
+            ],
+        )
+    
+        # Transform matrices.
+        (
+            A,
+            B,
+            S,
+            matrix_node_counts,
+            matrix_node_labels,
+        ) = self._transform_matrices(
+            A,
+            B,
+            S,
+        )
+    
+        # Transform states.
+        (
+            X,
+            xr,
+            n_initial_states,
+            state_node_counts,
+            state_node_labels,
+        ) = self._transform_states(
+            X,
+            X0,
+            Xf,
+            xr,
+        )
+    
+        # Combine transform-time node metadata.
+        node_counts = {
+            **matrix_node_counts,
+            **state_node_counts,
+        }
+    
+        node_labels = {
+            **matrix_node_labels,
+            **state_node_labels,
+        }
+    
+        # Validate consistency among transform inputs.
+        _validate_node_counts(
+            node_counts
+        )
+        _validate_node_labels(
+            node_labels
+        )
+    
+        # Validate transform inputs against the fitted schema.
+        self._validate_transform_schema(
+            node_counts,
+            node_labels,
+        )
+    
+        # Determine requested state transitions.
+        transition_indices = _get_transition_indices(
+            X.shape[0],
+            transitions,
+            n_initial_states=n_initial_states,
+        )
+    
+        # Compute state and control trajectories.
+        (
+            state_trajectories,
+            control_trajectories,
+            errors,
+        ) = get_transition_trajectories(
+            A,
+            X,
+            transition_indices,
+            self.T_,
+            B,
+            self.rho_,
+            S,
+            system=self.system_,
+            xr=xr,
+            expm_version=self.expm_version_,
+        )
+    
             
-    #         """
-
-    #     # check that all needed inputs exist
-    #     # FIXME: Check this (some can be dropped others have to be added?)
-    #     check_is_fitted(
-    #         self,
-    #         attributes=[
-    #             "A_norm_",
-    #             "B_",
-    #             "S_",
-    #             "rho_",
-    #             "X_type_",
-    #             "n_state_nodes_",
-    #             "node_labels_",
-    #             "xr_",
-    #         ],
-    #     )
-    
-    #     xr_transform = (
-    #         self.xr_
-    #         if xr_override is None
-    #         else xr_override
-    #     )
-
-    #     # Check the reference against the fitted energy configuration before
-    #     # resolving its concrete state representation.
-    #     _resolve_rho_and_S(
-    #         self.rho_,
-    #         self.S_,
-    #         self.energy_type_,
-    #         self.n_nodes_,
-    #     )
-
-    #     # Resolve transform input into a consistent representation.
-    #     (
-    #         X_resolved,
-    #         X_type,
-    #         xr_resolved,
-    #         xr_type,
-    #         node_labels_transform,
-    #     ) = _resolve_state_input(
-    #         X=X,
-    #         X0=X0,
-    #         xf=xf,
-    #         xr=xr_transform,
-    #     )
+        # Store numerical errors from the most recent transform.
+        self.errors_ = errors
         
-    #     # Transform into (n_states, n_nodes), regardless of the concrete
-    #     # representation used during fit.
-    #     X, node_labels_transform = self._transform_states(
-    #         X_resolved,
-    #         X_type,
-    #         node_labels_transform,
-    #     )
-    #     n_states = X.shape[0]
+        # Store trajectories from the most recent transform if requested.
+        if self.store_state_trajectories_:
+            self.state_trajectories_ = state_trajectories
+        else:
+            self.__dict__.pop("state_trajectories_", None)
         
-    #     # Validate requested transition ordering.
-    #     order = _validate_transition_order(n_states, order)
-    
-    #     # number of nodes must match what was seen during fit.
-    #     if X.shape[1] != self.n_state_nodes_:
-    #         raise ValueError(
-    #             "State input must contain the same number of nodes as seen "
-    #             f"during fit; expected {self.n_state_nodes_}, "
-    #             f"got {X.shape[1]}"
-    #         )
-
-    #     if (
-    #         self.node_labels_ is not None
-    #         and node_labels_transform is not None
-    #         and not self.node_labels_.equals(node_labels_transform)
-    #     ):
-    #         raise ValueError(
-    #             "Transform node labels must exactly match the fitted "
-    #             "node labels, including their order"
-    #         )
-
-    #     xr_transform, _ = self._get_reference_state(
-    #         xr_resolved,
-    #         xr_type,
-    #         self.masker_,
-    #         X.shape[1],
-    #     )
-        
-    #     # compute trajectories
-    #     cached_transition = self._cache(get_transition_trajectories, func_memory_level=1)
-
-    #     state_trajectories, control_trajectories, errors = cached_transition(
-    #         A=self.A_norm_,
-    #         T=self.T_,
-    #         B=self.B_,
-    #         X=X,
-    #         rho=self.rho_,
-    #         S=self.S_,
-    #         order=order,
-    #         system=self.system_,
-    #         # nctpy still requires an xr value when S is the zero matrix used
-    #         # for minimal energy, although the value cannot affect the cost.
-    #         xr="zero" if xr_transform is None else xr_transform, # FIXME: I don't think this is right
-    #         expm_version=self.expm_version_,
-    #     )
-        
-    #     # if set by user during init, store trajectories otherwise don't expose them
-    #     if self.store_state_trajectories_:
-    #         self.state_trajectories_ = state_trajectories
-    #     else:
-    #         self.__dict__.pop("state_trajectories_", None)
+        if self.store_control_trajectories_:
+            self.control_trajectories_ = control_trajectories
+        else:
+            self.__dict__.pop("control_trajectories_", None)
             
-    #     if self.store_control_trajectories_:
-    #         self.control_trajectories_ = control_trajectories
-    #     else:
-    #         self.__dict__.pop("control_trajectories_",None)
-        
-    #     self.errors_ = errors
-        
-    #     # integrate control inputs
-    #     transition_energy = get_transition_energy(control_trajectories)
-        
-    #     # infer state labels
-    #     if X_type == "tabular_like":
-    #         state_labels_inferred = X_resolved.index
+        # Compute node-level control energy.
+        transition_energy = get_transition_energy(
+            control_trajectories
+        )
     
-    #     elif X_type == "niimg_like":
-    #         state_labels_inferred = None
+        return transition_energy
     
-    #     # if user has provided separate state labels then overwrite the inferred ones
-    #     state_labels = state_labels if state_labels is not None else state_labels_inferred
-        
-    #     # make sure that state labels are always convertable to index and have the expected length
-    #     state_labels = None if state_labels is None else _coerce_labels(state_labels,n_states,"state_labels")
-        
-    #     # compute transition labels and store them
-    #     transition_labels = None if state_labels is None else _state_transition_index(state_labels,order)
-    #     self.transition_labels_ = transition_labels
-
-    #     # Return df that has either both columns and index, only columns, only index, no columns and no index
-    #     df_transition_energy = pd.DataFrame(transition_energy,index=transition_labels,columns=self.node_labels_)
-                
-    #     return df_transition_energy
-
-    # def fit_transform(
-    #     self,
-    #     X=None,
-    #     y=None,
-    #     *,
-    #     X0=None,
-    #     xf=None,
-    #     xr_override=None,
-    #     node_labels=None,
-    #     state_labels=None,
-    #     order="permutations",
-    # ):
-    #     """Fit and transform states supplied as ``X`` or as ``X0`` and ``xf``.
-
-    #     ``xr_override`` is a transform-time empirical reference. ``None``
-    #     uses the reference configured on the instance.
-    #     """
-        
-    #     return self.fit(
-    #         X,
-    #         y,
-    #         x0=x0,
-    #         xf=xf,
-    #         node_labels=node_labels,
-    #     ).transform(
-    #         X,
-    #         x0=x0,
-    #         xf=xf,
-    #         xr_override=xr_override,
-    #         state_labels=state_labels,
-    #         order=order,
-    #     )
-            
     def get_errors(self):
         """Return numerical errors from the most recent transform call."""
         
         check_is_fitted(self, attributes=["errors_"])
         return self.errors_.copy()
 
+    # FIXME: We must make sure that node_labels is a list
     def get_state_trajectories(self):
         """Return retained state trajectories as a labelled xarray DataArray."""
         
@@ -751,6 +1034,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                     name="state_trajectories",
                     )
 
+    # FIXME: We must make sure that node_labels is a list
     def get_control_trajectories(self):
         """Return retained control trajectories as a labelled xarray DataArray."""
         

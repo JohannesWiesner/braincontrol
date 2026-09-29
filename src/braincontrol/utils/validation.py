@@ -22,6 +22,8 @@ def _is_niimg_like(value):
         return False
     return True
 
+# FIXME: _validate functions should not return anything
+# FIXME: I think we can put the dimension check into _is_niimg_like()
 def _validate_single_state_niimg(value, name):
     """Resolve Niimg-like input representing exactly one state.
 
@@ -111,10 +113,11 @@ def _resolve_array_or_identity(value, n_nodes):
 
     return np.asarray(value)
 
-# TODO: should be renamed to:
-# _validate_symmetric_labels_if_dataframe
+# FIXME: This function should not check if the input is a dataframe, it should
+# expect it
 def _validate_symmetric_dataframe_labels(obj, name):
-    """Validate node labels of a symmetric matrix DataFrame.
+    """Validate that row and column indices of a symmetric matrix DataFrame
+    are the same.
 
     Parameters
     ----------
@@ -503,21 +506,50 @@ def _validate_node_labels(node_labels):
                     f"{name_a} and {name_b} have different node labels."
                 )
 
-# FIXME: _validate functions should never return anything
-def _validate_transition_order(n_states, order):
-    """Validate that the requested transition order is possible."""
-    order = _validate_choice(
-        order,
-        "order",
-        ("combinations", "permutations", "product", "stability"),
-    )
+# FIXME: Put this elsewhere
+def _get_n_nodes_from_schema(node_counts):
+    """Return the number of nodes from a validated node-count schema."""
 
-    if n_states < 1:
-        raise ValueError("State input must contain at least one state")
+    for n_nodes in node_counts.values():
+        if n_nodes is not None:
+            return n_nodes
 
-    if n_states == 1 and order in ("combinations", "permutations"):
+    return None
+
+# FIXME: Put this elsewhere
+def _get_node_labels_from_schema(node_labels):
+    """Return node labels from a validated node-label schema."""
+
+    for labels in node_labels.values():
+        if labels is not None:
+            return labels
+
+    return None
+
+# FIXME: Put this elsewhere
+def _validate_transform_node_labels(
+    fitted_node_labels,
+    transform_node_labels,
+):
+    """Validate transform node labels against fitted node labels."""
+
+    if fitted_node_labels is None and transform_node_labels is None:
+        return
+
+    if fitted_node_labels is None:
         raise ValueError(
-            f"order={order!r} requires at least two states"
+            "Node labels were provided during transform, but no "
+            "node labels were established during fit."
         )
 
-    return order
+    if transform_node_labels is None:
+        raise ValueError(
+            "Node labels were established during fit, but no "
+            "node labels were provided during transform."
+        )
+
+    if not transform_node_labels.equals(fitted_node_labels):
+        raise ValueError(
+            "Node labels provided during transform do not match "
+            "the node labels established during fit."
+        )
