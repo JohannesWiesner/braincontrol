@@ -14,7 +14,8 @@ license = { text = "MIT" }
 requires-python = ">=3.9"
 dependencies = [
     "nctpy==1.0.2",
-    "xarray"
+    "xarray",
+    "nilearn>=0.13.0"
 ]
 
 [project.optional-dependencies]
