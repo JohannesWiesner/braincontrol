@@ -566,12 +566,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     
         masker = clone(self.masker).fit(imgs)
     
-        # TODO: Is this really needed?
-        if not hasattr(masker, "n_elements_"):
-            raise TypeError(
-                "masker must expose n_elements_ after fitting."
-            )
-    
         return masker.transform(imgs)
     
     def _fit_states(
