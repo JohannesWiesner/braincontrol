@@ -33,9 +33,10 @@ from braincontrol.utils.validation import (
     _validate_state_array,
     _get_node_labels,
     _validate_node_labels,
-    _get_n_nodes_from_schema,
-    _get_node_labels_from_schema,
-    _validate_transform_node_labels
+    _get_common_node_count,
+    _get_common_node_labels,
+    _validate_transform_node_labels,
+    _get_node_count
 )
 
 from nctpy.energies import get_control_inputs, integrate_u
@@ -50,6 +51,7 @@ from nctpy.utils import matrix_normalization
 ## Functions
 ###############################################################################
 
+# TODO: This function is too long
 def _get_transition_indices(
     n_states,
     transitions,
@@ -514,7 +516,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         B,
         S,
     ):
-        """Validate matrix inputs and fit matrix-related metadata."""
+        """Validate matrix inputs and return matrix-related schema metadata."""
     
         # Validate matrices.
         _validate_A(A)
@@ -522,22 +524,30 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         _validate_S(S, self.energy_type_)
     
         # Extract node labels before resolving matrices.
-        self.node_labels_["A"] = _get_node_labels(A)
-        self.node_labels_["B"] = _get_node_labels(B)
-        self.node_labels_["S"] = _get_node_labels(S)
+        node_labels = {
+            "A": _get_node_labels(A),
+            "B": _get_node_labels(B),
+            "S": _get_node_labels(S),
+        }
     
-        # A determines the number of nodes used to resolve B and S if they are `identity`
+        # A determines the number of nodes used to resolve B and S.
         n_nodes = A.shape[0]
     
         # Resolve matrices.
         A_resolved = _resolve_A(A)
         B_resolved = _resolve_B(B, n_nodes)
-        S_resolved = _resolve_S(S,self.energy_type_,n_nodes)
+        S_resolved = _resolve_S(
+            S,
+            self.energy_type_,
+            n_nodes,
+        )
     
-        # Extract node counts after resolving
-        self.n_nodes_["A"] = A_resolved.shape[0]
-        self.n_nodes_["B"] = B_resolved.shape[0]
-        self.n_nodes_["S"] = S_resolved.shape[0]
+        # Extract node counts after resolving matrices.
+        node_counts = {
+            "A": A_resolved.shape[0],
+            "B": B_resolved.shape[0],
+            "S": S_resolved.shape[0],
+        }
     
         # Validate resolved matrix shapes.
         _validate_same_shape(
@@ -545,7 +555,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             ["A", "B", "S"],
         )
     
-    def _transform_niimg(self, imgs):
+        return node_counts, node_labels
+    
+    def _process_niimg(self, imgs):
         """Fit and apply a masker to Niimg-like input.
     
         Parameters
@@ -568,6 +580,42 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     
         return masker.transform(imgs)
     
+    def _process_states(self, states):
+        """Transform state inputs into nctpy-digestible format and extract their schema metadata."""
+    
+        states_processed = {}
+        node_counts = {}
+        node_labels = {}
+    
+        for name, state in states.items():
+    
+            if _is_niimg_like(state):
+                state = self._process_niimg(state)
+    
+            if state is None or isinstance(state, str):
+                states_processed[name] = state
+                node_counts[name] = None
+                node_labels[name] = None
+                continue
+    
+            # validate that object is 1D/2D array-ish
+            _validate_state_array(state, name)
+            state_processed = np.asarray(state)
+            
+            # get number of nodes from preprocesed state and node_labels from 
+            # original input
+            n_nodes = _get_node_count(state_processed)
+            node_labels[name] = _get_node_labels(state)
+    
+            states_processed[name] = state_processed
+            node_counts[name] = n_nodes
+    
+        return (
+            states_processed,
+            node_counts,
+            node_labels,
+        )
+    
     def _fit_states(
         self,
         X,
@@ -575,41 +623,22 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         Xf,
         xr,
     ):
-        """Validate state inputs and fit state-related metadata."""
+        """Validate state inputs and return state-related schema metadata."""
     
         # Validate state-input configuration.
-        _validate_transition_states(X,X0,Xf)
-        _validate_xr(xr,self.energy_type_)
+        _validate_transition_states(X, X0, Xf)
+        _validate_xr(xr, self.energy_type_)
     
-        # now check every object and store the number of nodes and node labels
-        for name, state_object in zip(
-            ["X", "X0", "Xf", "xr"],
-            [X, X0, Xf, xr],
-        ):
-            # Convert Niimg-like inputs to their state representation.
-            if _is_niimg_like(state_object):
-                state_object = self._transform_niimg(
-                    state_object
-                )
+        states = {
+            "X": X,
+            "X0": X0,
+            "Xf": Xf,
+            "xr": xr,
+        }
     
-            # None and string inputs do not themselves define nodes.
-            if state_object is None or isinstance(state_object, str):
-                n_nodes = None
+        _, node_counts, node_labels = self._process_states(states)
     
-            else:
-                _validate_state_array(state_object,name)
-                
-                # TODO: Make function out of this, e.g. get_number_of_nodes
-                state_array = np.asarray(state_object)
-    
-                if state_array.ndim == 1:
-                    n_nodes = state_array.shape[0]
-                else:
-                    n_nodes = state_array.shape[1]
-    
-            # Store only schema metadata, not the empirical state object.
-            self.n_nodes_[name] = n_nodes
-            self.node_labels_[name] = _get_node_labels(state_object)
+        return node_counts, node_labels
     
     def fit(
         self,
@@ -660,37 +689,39 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             self.store_control_trajectories,
         )
     
-        # Initialize fitted schema metadata.
-        self.n_nodes_ = {}
-        self.node_labels_ = {}
-    
         # Fit matrix schema.
-        self._fit_matrices(
+        matrix_node_counts, matrix_node_labels = self._fit_matrices(
             A,
             B,
             S,
         )
     
         # Fit state schema.
-        self._fit_states(
+        state_node_counts, state_node_labels = self._fit_states(
             X,
             X0,
             Xf,
             xr,
         )
     
+        # Combine matrix and state schema metadata.
+        node_counts = {
+            **matrix_node_counts,
+            **state_node_counts,
+        }
+    
+        node_labels = {
+            **matrix_node_labels,
+            **state_node_labels,
+        }
+    
         # Validate the complete node schema.
-        # FIXME: At this point it would be nice to have n_nodes as one number,
-        # after validation has been done
-        _validate_node_counts(
-            self.n_nodes_
-        )
-        
-        # FIXME: At this point it would be nice to have node_labels as one arrays
-        # after validation has been done (otherwise store node_label_dict and node_labels separately)
-        _validate_node_labels(
-            self.node_labels_
-        )
+        _validate_node_counts(node_counts)
+        _validate_node_labels(node_labels)
+    
+        # Store the validated common node schema.
+        self.n_nodes_ = _get_common_node_count(node_counts)
+        self.node_labels_ = _get_common_node_labels(node_labels)
     
         return self
 
@@ -703,57 +734,41 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     ):
         """Validate and transform state inputs for NCT computation."""
     
+        # Validate state-input configuration.
         _validate_transition_states(X, X0, Xf)
         _validate_xr(xr, self.energy_type_)
     
-        node_counts = {}
-        node_labels = {}
-        
-        # FIXME: All of the following is too long. Try to resuse functions
+        states = {
+            "X": X,
+            "X0": X0,
+            "Xf": Xf,
+            "xr": xr,
+        }
     
-        # Transform a single set of states.
+        # Process states and extract their schema metadata.
+        states, node_counts, node_labels = self._process_states(
+            states
+        )
+    
+        X = states["X"]
+        X0 = states["X0"]
+        Xf = states["Xf"]
+        xr = states["xr"]
+    
+        # FIXME: The following is too long
+        # Arrange transition states for NCT computation.
         if X is not None:
-            if _is_niimg_like(X):
-                X = self._transform_niimg(X)
-    
-            _validate_state_array(X, "X")
-    
-            node_labels["X"] = _get_node_labels(X)
-    
-            X = np.asarray(X)
-    
             if X.ndim == 1:
                 X = X[np.newaxis, :]
     
-            node_counts["X"] = X.shape[1]
-    
             n_initial_states = None
     
-        # Transform separate initial and final state sets.
         else:
-            if _is_niimg_like(X0):
-                X0 = self._transform_niimg(X0)
-    
-            if _is_niimg_like(Xf):
-                Xf = self._transform_niimg(Xf)
-    
-            _validate_state_array(X0, "X0")
-            _validate_state_array(Xf, "Xf")
-    
-            node_labels["X0"] = _get_node_labels(X0)
-            node_labels["Xf"] = _get_node_labels(Xf)
-    
-            X0 = np.asarray(X0)
-            Xf = np.asarray(Xf)
-    
             if X0.ndim == 1:
                 X0 = X0[np.newaxis, :]
     
             if Xf.ndim == 1:
                 Xf = Xf[np.newaxis, :]
-    
-            node_counts["X0"] = X0.shape[1]
-            node_counts["Xf"] = Xf.shape[1]
     
             n_initial_states = X0.shape[0]
     
@@ -762,21 +777,8 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 axis=0,
             )
     
-        # Transform the reference state.
-        if xr is None or isinstance(xr, str):
-            node_counts["xr"] = None
-            node_labels["xr"] = None
-    
-        else:
-            if _is_niimg_like(xr):
-                xr = self._transform_niimg(xr)
-    
-            _validate_state_array(xr, "xr")
-    
-            node_labels["xr"] = _get_node_labels(xr)
-    
-            xr = np.asarray(xr)
-    
+        # Arrange the reference state for NCT computation.
+        if xr is not None and not isinstance(xr, str):
             if xr.ndim == 2:
                 if xr.shape[0] != 1:
                     raise ValueError(
@@ -784,9 +786,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                     )
     
                 xr = xr[0]
-    
-            node_counts["xr"] = xr.shape[0]
-    
+
         return (
             X,
             xr,
@@ -794,94 +794,93 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             node_counts,
             node_labels,
         )
-    
+
+    # TODO: I think just as with states, we can use a common function
+    # that we can use for both _fit_matrices and _transform_matrices
     def _transform_matrices(
-        self,
-        A,
-        B,
-        S,
-    ):
-        """Validate and transform matrix inputs for NCT computation."""
-    
-        # Validate matrices.
-        _validate_A(A)
-        _validate_B(B)
-        _validate_S(S, self.energy_type_)
-    
-        # Extract node labels before resolving matrices.
-        node_labels = {
-            "A": _get_node_labels(A),
-            "B": _get_node_labels(B),
-            "S": _get_node_labels(S),
-        }
-    
-        # A determines the number of nodes used to resolve B and S.
-        n_nodes = A.shape[0]
-    
-        # Resolve matrices.
-        A = _resolve_A(A)
-        B = _resolve_B(B, n_nodes)
-        S = _resolve_S(
+            self,
+            A,
+            B,
             S,
-            self.energy_type_,
-            n_nodes,
-        )
-    
-        # Validate resolved matrix shapes.
-        _validate_same_shape(
-            [A, B, S],
-            ["A", "B", "S"],
-        )
-    
-        # Extract node counts from the resolved matrices.
-        node_counts = {
-            "A": A.shape[0],
-            "B": B.shape[0],
-            "S": S.shape[0],
-        }
-    
-        # Normalize the adjacency matrix used for NCT.
-        if self.normalize_A_:
-            A = matrix_normalization(
-                A,
-                self.system_,
-                self.c_,
+        ):
+            """Validate and transform matrix inputs for NCT computation."""
+        
+            # Validate matrices.
+            _validate_A(A)
+            _validate_B(B)
+            _validate_S(S, self.energy_type_)
+        
+            # Extract node labels before resolving matrices.
+            node_labels = {
+                "A": _get_node_labels(A),
+                "B": _get_node_labels(B),
+                "S": _get_node_labels(S),
+            }
+        
+            # A determines the number of nodes used to resolve B and S.
+            n_nodes = A.shape[0]
+        
+            # Resolve matrices.
+            A = _resolve_A(A)
+            B = _resolve_B(B, n_nodes)
+            S = _resolve_S(
+                S,
+                self.energy_type_,
+                n_nodes,
             )
-    
-        return A, B, S, node_counts, node_labels
-    
+        
+            # Validate resolved matrix shapes.
+            _validate_same_shape(
+                [A, B, S],
+                ["A", "B", "S"],
+            )
+        
+            # Extract node counts from the resolved matrices.
+            node_counts = {
+                "A": A.shape[0],
+                "B": B.shape[0],
+                "S": S.shape[0],
+            }
+        
+            # Normalize the adjacency matrix used for NCT.
+            if self.normalize_A_:
+                A = matrix_normalization(
+                    A,
+                    self.system_,
+                    self.c_,
+                )
+        
+            return A, B, S, node_counts, node_labels
+
     def _validate_transform_schema(
-        self,
-        node_counts,
-        node_labels,
-    ):
-        """Validate transform-time node schema against the fitted schema."""
-    
-        fitted_n_nodes = _get_n_nodes_from_schema(
-            self.n_nodes_
-        )
-        transform_n_nodes = _get_n_nodes_from_schema(
-            node_counts
-        )
-    
-        if transform_n_nodes != fitted_n_nodes:
-            raise ValueError(
-                f"Transform inputs contain {transform_n_nodes} nodes, "
-                f"but the fitted schema contains {fitted_n_nodes} nodes."
+            self,
+            node_counts,
+            node_labels,
+        ):
+            """Validate transform-time node schema against the fitted schema."""
+        
+            # Extract the common transform-time node count.
+            transform_n_nodes = _get_common_node_count(
+                node_counts
             )
-    
-        fitted_node_labels = _get_node_labels_from_schema(
-            self.node_labels_
-        )
-        transform_node_labels = _get_node_labels_from_schema(
-            node_labels
-        )
-    
-        _validate_transform_node_labels(
-            fitted_node_labels,
-            transform_node_labels,
-    )
-    
+        
+            if transform_n_nodes != self.n_nodes_:
+                raise ValueError(
+                    f"Transform inputs contain {transform_n_nodes} nodes, "
+                    f"but the fitted schema contains {self.n_nodes_} nodes."
+                )
+        
+            # Extract the common transform-time node labels.
+            transform_node_labels = _get_common_node_labels(
+                node_labels
+            )
+        
+            _validate_transform_node_labels(
+                self.node_labels_,
+                transform_node_labels,
+            )
+
+
     # TODO: Work on state_labels
     # TODO: I think the transitions argument is better off in init, see issue #7
     def transform(
@@ -991,21 +990,26 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             expm_version=self.expm_version_,
         )
     
-            
         # Store numerical errors from the most recent transform.
         self.errors_ = errors
-        
+    
         # Store trajectories from the most recent transform if requested.
         if self.store_state_trajectories_:
             self.state_trajectories_ = state_trajectories
         else:
-            self.__dict__.pop("state_trajectories_", None)
-        
+            self.__dict__.pop(
+                "state_trajectories_",
+                None,
+            )
+    
         if self.store_control_trajectories_:
             self.control_trajectories_ = control_trajectories
         else:
-            self.__dict__.pop("control_trajectories_", None)
-            
+            self.__dict__.pop(
+                "control_trajectories_",
+                None,
+            )
+    
         # Compute node-level control energy.
         transition_energy = get_transition_energy(
             control_trajectories
@@ -1020,6 +1024,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         return self.errors_.copy()
 
     # FIXME: We must make sure that node_labels is a list
+    # Update: It is a list-like object now
     def get_state_trajectories(self):
         """Return retained state trajectories as a labelled xarray DataArray."""
         
@@ -1031,6 +1036,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                     )
 
     # FIXME: We must make sure that node_labels is a list
+    # Update it is a list-like object now
     def get_control_trajectories(self):
         """Return retained control trajectories as a labelled xarray DataArray."""
         
