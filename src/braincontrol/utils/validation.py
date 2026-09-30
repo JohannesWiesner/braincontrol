@@ -22,41 +22,6 @@ def _is_niimg_like(value):
         return False
     return True
 
-# FIXME: _validate functions should not return anything
-# FIXME: I think we can put the dimension check into _is_niimg_like()
-def _validate_single_state_niimg(value, name):
-    """Resolve Niimg-like input representing exactly one state.
-
-    Three-dimensional input is converted to a singleton 4D image.
-    Existing 4D input must contain exactly one volume.
-
-    Parameters
-    ----------
-    value : Niimg-like
-        Image representing a single state.
-    name : str
-        Parameter name used in error messages.
-
-    Returns
-    -------
-    Niimg-like
-        Validated 4D image containing exactly one state.
-
-    Raises
-    ------
-    ValueError
-        If the image contains more than one state.
-    """
-    img = check_niimg(value,atleast_4d=True)
-
-    if img.shape[3] != 1:
-        raise ValueError(
-            f"{name} must represent exactly one state; "
-            f"got image shape {img.shape}"
-        )
-
-    return img
-
 ###############################################################################
 ## Validation helpers for matrices
 ###############################################################################
@@ -302,7 +267,7 @@ def _resolve_rho(rho, energy_type):
 ###############################################################################
 ## Validation helpers for state-like input
 ###############################################################################
-        
+
 def _validate_xr(xr,energy_type):
     """Validate a named reference, one Niimg-like state, or an (N, 1) array.
     An array must contain numeric, finite values. An image must contain
@@ -322,7 +287,14 @@ def _validate_xr(xr,energy_type):
             return
         
         if _is_niimg_like(xr):
-            _validate_single_state_niimg(xr,"xr")
+            
+            xr_img = check_niimg(xr,atleast_4d=True)
+
+            if xr_img.shape[3] != 1:
+                raise ValueError(
+                    f"If xr is niimg-like it must represent exactly one state; "
+                    f"got image shape {xr_img.shape}"
+                )
     
         if isinstance(xr, np.ndarray):
             if xr.ndim != 2 or xr.shape[1] != 1:
