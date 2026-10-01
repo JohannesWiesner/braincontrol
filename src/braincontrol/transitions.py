@@ -38,6 +38,7 @@ from braincontrol.utils.validation.schema import (
     _get_common_node_count,
     _get_state_labels,
     _validate_state_labels,
+    _get_transition_labels,
 )
 
 from braincontrol.utils.resolving import (
@@ -48,6 +49,7 @@ from braincontrol.utils.resolving import (
     )
 
 import numpy as np
+import pandas as pd
 from nctpy.energies import get_control_inputs, integrate_u
 from nilearn._utils.cache_mixin import CacheMixin
 from sklearn.base import BaseEstimator, TransformerMixin, clone
@@ -1015,6 +1017,12 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             n_initial_states=n_initial_states,
         )
     
+        self.transition_labels_ = _get_transition_labels(
+            state_labels,
+            transition_indices,
+            n_initial_states=n_initial_states,
+        )
+    
         # Compute state and control trajectories.
         (
             state_trajectories,
@@ -1058,6 +1066,17 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             control_trajectories
         )
     
+        # Preserve available transition and node labels.
+        if (
+            self.transition_labels_ is not None
+            or self.node_labels_ is not None
+        ):
+            transition_energy = pd.DataFrame(
+                transition_energy,
+                index=self.transition_labels_,
+                columns=self.node_labels_,
+            )
+        
         return transition_energy
     
     def get_errors(self):

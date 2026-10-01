@@ -20,7 +20,7 @@ import pandas as pd
 ###############################################################################
 
 def _get_node_count(array):
-    """Return the number of nodes in a state object.
+    """Return the number of nodes of a state object.
 
     Parameters
     ----------
@@ -83,6 +83,9 @@ def _get_common_node_count(node_counts):
     n_nodes : int or None
         Common number of nodes, or None if no node count is defined.
     """
+    
+    # return the first node_count that is not None (at this point we know
+    # that all node counts are equal)
     for n_nodes in node_counts.values():
         if n_nodes is not None:
             return n_nodes
@@ -155,6 +158,9 @@ def _get_common_node_labels(node_labels):
     labels : pandas.Index or None
         Common node labels, or None if no node labels are defined.
     """
+    
+    # return the first node_labels that is not None (at this point we know
+    # that all node labels are equal)
     for labels in node_labels.values():
         if labels is not None:
             return labels
@@ -162,7 +168,7 @@ def _get_common_node_labels(node_labels):
     return None
 
 # FIXME: Put this logic into _validate_transform_schema, as it's only used
-# once?
+# once (?)
 def _validate_transform_node_labels(
     fitted_node_labels,
     transform_node_labels,
@@ -372,6 +378,10 @@ def _get_transition_labels(
     )
     values[:] = transition_values
 
+    # TODO: Should this always return an Index? If yes, then it does not make 
+    # sense in .transform() to check for transition_labels = None 
+    # because we will always have them and therefore we will always get 
+    # a dataframe as ouput
     return pd.Index(
         values,
         name="transition",
