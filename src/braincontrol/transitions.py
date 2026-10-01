@@ -5,41 +5,52 @@ also accepts image-like inputs through a scikit-learn compatible masker (for
 example, :class:`nilearn.maskers.NiftiLabelsMasker`).
 """
 
-import numpy as np
-
 from braincontrol.utils.io import (
     _coerce_labels,
     _get_trajectory_array,
 )
 
-from braincontrol.utils.validation import (
+from braincontrol.utils.validation.matrices import (
     _validate_A,
-    _resolve_A,
     _validate_B,
-    _resolve_B,
     _validate_S,
-    _resolve_S,
-    _validate_positive_real,
+    _validate_same_shape
+    )
+
+from braincontrol.utils.validation.parameters import (
     _validate_boolean,
     _validate_choice,
-    _validate_same_shape,
+    _validate_positive_real,
     _validate_time_horizon,
-    _validate_rho,
-    _resolve_rho,
-    _validate_xr,
-    _validate_transition_states,
+    _validate_rho
+    )
+
+from braincontrol.utils.validation.states import (
     _is_niimg_like,
-    _validate_node_counts,
+    _validate_transition_states,
+    _validate_xr,
     _validate_state_array,
+    )
+
+from braincontrol.utils.validation.node_objects import (
+    _validate_transition_strategy,
+    _validate_node_counts,
     _get_node_labels,
     _validate_node_labels,
-    _get_common_node_count,
     _get_common_node_labels,
     _validate_transform_node_labels,
     _get_node_count,
-    _validate_transition_strategy
-)
+    _get_common_node_count,
+    )
 
+from braincontrol.utils.resolving import (
+    _resolve_A,
+    _resolve_B,
+    _resolve_S,
+    _resolve_rho
+    )
+
+import numpy as np
 from nctpy.energies import get_control_inputs, integrate_u
 from nilearn._utils.cache_mixin import CacheMixin
 from sklearn.base import BaseEstimator, TransformerMixin, clone
@@ -53,6 +64,7 @@ from nctpy.utils import matrix_normalization
 ###############################################################################
 
 # TODO: This function is too long
+# TODO: This function should be placed elsewhere and then imported
 def _get_transition_indices(
     n_states,
     transitions,
@@ -216,16 +228,10 @@ def _get_transition_indices(
         for transition, (source, target) in enumerate(pairs)
     ]
 
-# TODO: Make more memory efficient by predefining empty arrays that have
-# n_transitions x n_timepoints x n_nodes. See old implementation:
-#     # TODO: This should be exposed by nctpy! 0.001 is hardcoded for now, but it would be better if we could import STEP from nctpy so we always use nctpy as origin 
-#     if system == "continuous":
-#         n_state_time_points = int(np.round(T / 0.001) + 1)
-#         n_control_time_points = n_state_time_points
-#     else:
-#         n_state_time_points = T + 1
-#         n_control_time_points = T
-# TODO: Make more computaionally efficient by using parallelization. 
+# TODO (#26): Make more memory efficient by predefining empty arrays that have
+# n_transitions x n_timepoints x n_nodes. 
+# TODO (#26): Make more computaionally efficient by using parallelization.
+# TODO: This function should be placed elsewhere and imported
 def get_transition_trajectories(
     A,
     X,
@@ -320,6 +326,7 @@ def get_transition_trajectories(
         errors,
     )
 
+# TODO: Should be placed elsewhere and then imported
 def get_transition_energy(control_trajectories):
     """Integrate control trajectories for every transition.
 
@@ -884,33 +891,32 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         )
 
     def _validate_transform_schema(
-            self,
-            node_counts,
-            node_labels,
-        ):
-            """Validate transform-time node schema against the fitted schema."""
-        
-            # Extract the common transform-time node count.
-            transform_n_nodes = _get_common_node_count(
-                node_counts
+        self,
+        node_counts,
+        node_labels,
+    ):
+        """Validate transform-time node schema against the fitted schema."""
+    
+        # Extract the common transform-time node count.
+        transform_n_nodes = _get_common_node_count(
+            node_counts
+        )
+    
+        if transform_n_nodes != self.n_nodes_:
+            raise ValueError(
+                f"Transform inputs contain {transform_n_nodes} nodes, "
+                f"but the fitted schema contains {self.n_nodes_} nodes."
             )
-        
-            if transform_n_nodes != self.n_nodes_:
-                raise ValueError(
-                    f"Transform inputs contain {transform_n_nodes} nodes, "
-                    f"but the fitted schema contains {self.n_nodes_} nodes."
-                )
-        
-            # Extract the common transform-time node labels.
-            transform_node_labels = _get_common_node_labels(
-                node_labels
-            )
-        
-            _validate_transform_node_labels(
-                self.node_labels_,
-                transform_node_labels,
-            )
-
+    
+        # Extract the common transform-time node labels.
+        transform_node_labels = _get_common_node_labels(
+            node_labels
+        )
+    
+        _validate_transform_node_labels(
+            self.node_labels_,
+            transform_node_labels,
+        )
 
     # TODO: Work on state_labels
     def transform(
@@ -1076,6 +1082,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                     name="control_trajectory",
                     )
 
+    # TODO: Not sure if this works currently. 
     def get_feature_names_out(self, input_features=None):
         """Return names for the node-level energy columns."""
         
