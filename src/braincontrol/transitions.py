@@ -5,11 +5,6 @@ also accepts image-like inputs through a scikit-learn compatible masker (for
 example, :class:`nilearn.maskers.NiftiLabelsMasker`).
 """
 
-from braincontrol.utils.io import (
-    _coerce_labels,
-    _get_trajectory_array,
-)
-
 from braincontrol.utils.validation.matrices import (
     _validate_A,
     _validate_B,
@@ -1073,42 +1068,42 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
 
     # FIXME: We must make sure that node_labels is a list
     # Update: It is a list-like object now
-    def get_state_trajectories(self):
-        """Return retained state trajectories as a labelled xarray DataArray."""
+    # def get_state_trajectories(self):
+    #     """Return retained state trajectories as a labelled xarray DataArray."""
         
-        return _get_trajectory_array(
-                    getattr(self, "state_trajectories_", None),
-                    node_labels=self.node_labels_,
-                    transition_labels=self.transition_labels_,
-                    name="state_trajectories",
-                    )
+    #     return _get_trajectory_array(
+    #                 getattr(self, "state_trajectories_", None),
+    #                 node_labels=self.node_labels_,
+    #                 transition_labels=self.transition_labels_,
+    #                 name="state_trajectories",
+    #                 )
 
     # FIXME: We must make sure that node_labels is a list
     # Update it is a list-like object now
-    def get_control_trajectories(self):
-        """Return retained control trajectories as a labelled xarray DataArray."""
+    # def get_control_trajectories(self):
+    #     """Return retained control trajectories as a labelled xarray DataArray."""
         
-        return _get_trajectory_array(
-                    getattr(self, "control_trajectories_", None),
-                    node_labels=self.node_labels_,
-                    transition_labels=self.transition_labels_,
-                    name="control_trajectory",
-                    )
+    #     return _get_trajectory_array(
+    #                 getattr(self, "control_trajectories_", None),
+    #                 node_labels=self.node_labels_,
+    #                 transition_labels=self.transition_labels_,
+    #                 name="control_trajectory",
+    #                 )
 
     # TODO: Not sure if this works currently. 
-    def get_feature_names_out(self, input_features=None):
-        """Return names for the node-level energy columns."""
+    # def get_feature_names_out(self, input_features=None):
+    #     """Return names for the node-level energy columns."""
         
-        check_is_fitted(self, attributes=["n_features_in_"])
-        if input_features is not None:
-            names = _coerce_labels(input_features, self.n_features_in_, "input_features")
-        elif self.node_labels_ is not None:
-            names = self.node_labels_
-        else:
-            names = [f"node_{index}" for index in range(self.n_features_in_)]
-        result = np.empty(self.n_features_in_, dtype=object)
-        result[:] = list(names)
-        return result
+    #     check_is_fitted(self, attributes=["n_features_in_"])
+    #     if input_features is not None:
+    #         names = _coerce_labels(input_features, self.n_features_in_, "input_features")
+    #     elif self.node_labels_ is not None:
+    #         names = self.node_labels_
+    #     else:
+    #         names = [f"node_{index}" for index in range(self.n_features_in_)]
+    #     result = np.empty(self.n_features_in_, dtype=object)
+    #     result[:] = list(names)
+    #     return result
 
 __all__ = [
     "Transitioner",
