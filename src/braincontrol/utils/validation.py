@@ -553,7 +553,7 @@ def _get_common_node_labels(node_labels):
 
     return None
 
-# FIXME: Put this elsewhere
+# FIXME: Put this logic into _validate_transform_schema
 def _validate_transform_node_labels(
     fitted_node_labels,
     transform_node_labels,

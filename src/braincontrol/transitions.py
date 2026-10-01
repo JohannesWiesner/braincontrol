@@ -510,13 +510,13 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         self.store_state_trajectories_ = store_state_trajectories
         self.store_control_trajectories_ = store_control_trajectories
     
-    def _fit_matrices(
+    def _process_matrices(
         self,
         A,
         B,
         S,
     ):
-        """Validate matrix inputs and return matrix-related schema metadata."""
+        """Validate and resolve matrix inputs and extract their schema metadata."""
     
         # Validate matrices.
         _validate_A(A)
@@ -534,25 +534,49 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         n_nodes = A.shape[0]
     
         # Resolve matrices.
-        A_resolved = _resolve_A(A)
-        B_resolved = _resolve_B(B, n_nodes)
-        S_resolved = _resolve_S(
-            S,
-            self.energy_type_,
-            n_nodes,
-        )
-    
-        # Extract node counts after resolving matrices.
-        node_counts = {
-            "A": A_resolved.shape[0],
-            "B": B_resolved.shape[0],
-            "S": S_resolved.shape[0],
-        }
+        A = _resolve_A(A)
+        B = _resolve_B(B, n_nodes)
+        S = _resolve_S(S,self.energy_type_,n_nodes)
     
         # Validate resolved matrix shapes.
         _validate_same_shape(
-            [A_resolved, B_resolved, S_resolved],
+            [A, B, S],
             ["A", "B", "S"],
+        )
+    
+        # Extract node counts from the resolved matrices.
+        node_counts = {
+            "A": A.shape[0],
+            "B": B.shape[0],
+            "S": S.shape[0],
+        }
+    
+        return (
+            A,
+            B,
+            S,
+            node_counts,
+            node_labels,
+        )
+        
+    def _fit_matrices(
+        self,
+        A,
+        B,
+        S,
+    ):
+        """Validate matrix inputs and return matrix-related schema metadata."""
+    
+        (
+            _,
+            _,
+            _,
+            node_counts,
+            node_labels,
+        ) = self._process_matrices(
+            A,
+            B,
+            S,
         )
     
         return node_counts, node_labels
@@ -754,7 +778,8 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         X0 = states["X0"]
         Xf = states["Xf"]
         xr = states["xr"]
-    
+        
+        # TODO: Not sure if the we should put the following also into _process_states?
         # FIXME: The following is too long
         # Arrange transition states for NCT computation.
         if X is not None:
@@ -795,62 +820,41 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             node_labels,
         )
 
-    # TODO: I think just as with states, we can use a common function
-    # that we can use for both _fit_matrices and _transform_matrices
     def _transform_matrices(
-            self,
+        self,
+        A,
+        B,
+        S,
+    ):
+        """Validate and transform matrix inputs for NCT computation."""
+    
+        (
             A,
             B,
             S,
-        ):
-            """Validate and transform matrix inputs for NCT computation."""
-        
-            # Validate matrices.
-            _validate_A(A)
-            _validate_B(B)
-            _validate_S(S, self.energy_type_)
-        
-            # Extract node labels before resolving matrices.
-            node_labels = {
-                "A": _get_node_labels(A),
-                "B": _get_node_labels(B),
-                "S": _get_node_labels(S),
-            }
-        
-            # A determines the number of nodes used to resolve B and S.
-            n_nodes = A.shape[0]
-        
-            # Resolve matrices.
-            A = _resolve_A(A)
-            B = _resolve_B(B, n_nodes)
-            S = _resolve_S(
-                S,
-                self.energy_type_,
-                n_nodes,
+            node_counts,
+            node_labels,
+        ) = self._process_matrices(
+            A,
+            B,
+            S,
+        )
+    
+        # Normalize the adjacency matrix used for NCT.
+        if self.normalize_A_:
+            A = matrix_normalization(
+                A,
+                self.system_,
+                self.c_,
             )
-        
-            # Validate resolved matrix shapes.
-            _validate_same_shape(
-                [A, B, S],
-                ["A", "B", "S"],
-            )
-        
-            # Extract node counts from the resolved matrices.
-            node_counts = {
-                "A": A.shape[0],
-                "B": B.shape[0],
-                "S": S.shape[0],
-            }
-        
-            # Normalize the adjacency matrix used for NCT.
-            if self.normalize_A_:
-                A = matrix_normalization(
-                    A,
-                    self.system_,
-                    self.c_,
-                )
-        
-            return A, B, S, node_counts, node_labels
+    
+        return (
+            A,
+            B,
+            S,
+            node_counts,
+            node_labels,
+        )
 
     def _validate_transform_schema(
             self,
