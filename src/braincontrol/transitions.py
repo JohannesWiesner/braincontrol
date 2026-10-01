@@ -5,11 +5,6 @@ also accepts image-like inputs through a scikit-learn compatible masker (for
 example, :class:`nilearn.maskers.NiftiLabelsMasker`).
 """
 
-from braincontrol.utils.io import (
-    _coerce_labels,
-    _get_trajectory_array,
-)
-
 from braincontrol.utils.validation.matrices import (
     _validate_A,
     _validate_B,
@@ -33,7 +28,7 @@ from braincontrol.utils.validation.states import (
     _validate_transition_strategy
     )
 
-from braincontrol.utils.validation.node_objects import (
+from braincontrol.utils.validation.schema import (
     _validate_node_counts,
     _get_node_labels,
     _validate_node_labels,
@@ -41,7 +36,10 @@ from braincontrol.utils.validation.node_objects import (
     _validate_transform_node_labels,
     _get_node_count,
     _get_common_node_count,
-    )
+    _get_state_labels,
+    _validate_state_labels,
+    _get_transition_labels,
+)
 
 from braincontrol.utils.resolving import (
     _resolve_A,
@@ -51,6 +49,7 @@ from braincontrol.utils.resolving import (
     )
 
 import numpy as np
+import pandas as pd
 from nctpy.energies import get_control_inputs, integrate_u
 from nilearn._utils.cache_mixin import CacheMixin
 from sklearn.base import BaseEstimator, TransformerMixin, clone
@@ -635,11 +634,12 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         return masker.transform(imgs)
     
     def _process_states(self, states):
-        """Transform state inputs into nctpy-digestible format and extract their schema metadata."""
+        """Process state inputs and extract their schema metadata."""
     
         states_processed = {}
         node_counts = {}
         node_labels = {}
+        state_labels = {}
     
         for name, state in states.items():
     
@@ -650,24 +650,25 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 states_processed[name] = state
                 node_counts[name] = None
                 node_labels[name] = None
+                state_labels[name] = None
                 continue
     
-            # validate that object is 1D/2D array-ish
             _validate_state_array(state, name)
-            state_processed = np.asarray(state)
-            
-            # get number of nodes from preprocesed state and node_labels from 
-            # original input
-            n_nodes = _get_node_count(state_processed)
+    
+            # Extract labels before converting to a NumPy array.
             node_labels[name] = _get_node_labels(state)
+            state_labels[name] = _get_state_labels(state)
+    
+            state_processed = np.asarray(state)
     
             states_processed[name] = state_processed
-            node_counts[name] = n_nodes
+            node_counts[name] = _get_node_count(state_processed)
     
         return (
             states_processed,
             node_counts,
             node_labels,
+            state_labels,
         )
     
     def _fit_states(
@@ -691,9 +692,12 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             "xr": xr,
         }
     
-        _, node_counts, node_labels = self._process_states(
-            states
-        )
+        (
+            _,
+            node_counts,
+            node_labels,
+            _,
+        ) = self._process_states(states)
     
         return node_counts, node_labels
     
@@ -805,9 +809,15 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         }
     
         # Process states and extract their schema metadata.
-        states, node_counts, node_labels = self._process_states(
-            states
-        )
+        (
+            states,
+            node_counts,
+            node_labels,
+            state_labels,
+        ) = self._process_states(states)
+        
+        # Validate state-label consistency.
+        _validate_state_labels(state_labels)
     
         X = states["X"]
         X0 = states["X0"]
@@ -852,8 +862,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             n_initial_states,
             node_counts,
             node_labels,
+            state_labels,
         )
-
+    
     def _transform_matrices(
         self,
         A,
@@ -918,7 +929,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             transform_node_labels,
         )
 
-    # TODO: Work on state_labels
     def transform(
         self,
         A,
@@ -927,8 +937,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         xr="xf",
         X=None,
         X0=None,
-        Xf=None,
-        state_labels=None,
+        Xf=None
     ):
         """Compute control energy for state transitions."""
     
@@ -968,13 +977,14 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             n_initial_states,
             state_node_counts,
             state_node_labels,
+            state_labels,
         ) = self._transform_states(
             X,
             X0,
             Xf,
             xr,
         )
-    
+            
         # Combine transform-time node metadata.
         node_counts = {
             **matrix_node_counts,
@@ -1004,6 +1014,12 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         transition_indices = _get_transition_indices(
             X.shape[0],
             self.transitions_,
+            n_initial_states=n_initial_states,
+        )
+    
+        self.transition_labels_ = _get_transition_labels(
+            state_labels,
+            transition_indices,
             n_initial_states=n_initial_states,
         )
     
@@ -1050,6 +1066,17 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             control_trajectories
         )
     
+        # Preserve available transition and node labels.
+        if (
+            self.transition_labels_ is not None
+            or self.node_labels_ is not None
+        ):
+            transition_energy = pd.DataFrame(
+                transition_energy,
+                index=self.transition_labels_,
+                columns=self.node_labels_,
+            )
+        
         return transition_energy
     
     def get_errors(self):
@@ -1060,42 +1087,42 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
 
     # FIXME: We must make sure that node_labels is a list
     # Update: It is a list-like object now
-    def get_state_trajectories(self):
-        """Return retained state trajectories as a labelled xarray DataArray."""
+    # def get_state_trajectories(self):
+    #     """Return retained state trajectories as a labelled xarray DataArray."""
         
-        return _get_trajectory_array(
-                    getattr(self, "state_trajectories_", None),
-                    node_labels=self.node_labels_,
-                    transition_labels=self.transition_labels_,
-                    name="state_trajectories",
-                    )
+    #     return _get_trajectory_array(
+    #                 getattr(self, "state_trajectories_", None),
+    #                 node_labels=self.node_labels_,
+    #                 transition_labels=self.transition_labels_,
+    #                 name="state_trajectories",
+    #                 )
 
     # FIXME: We must make sure that node_labels is a list
     # Update it is a list-like object now
-    def get_control_trajectories(self):
-        """Return retained control trajectories as a labelled xarray DataArray."""
+    # def get_control_trajectories(self):
+    #     """Return retained control trajectories as a labelled xarray DataArray."""
         
-        return _get_trajectory_array(
-                    getattr(self, "control_trajectories_", None),
-                    node_labels=self.node_labels_,
-                    transition_labels=self.transition_labels_,
-                    name="control_trajectory",
-                    )
+    #     return _get_trajectory_array(
+    #                 getattr(self, "control_trajectories_", None),
+    #                 node_labels=self.node_labels_,
+    #                 transition_labels=self.transition_labels_,
+    #                 name="control_trajectory",
+    #                 )
 
     # TODO: Not sure if this works currently. 
-    def get_feature_names_out(self, input_features=None):
-        """Return names for the node-level energy columns."""
+    # def get_feature_names_out(self, input_features=None):
+    #     """Return names for the node-level energy columns."""
         
-        check_is_fitted(self, attributes=["n_features_in_"])
-        if input_features is not None:
-            names = _coerce_labels(input_features, self.n_features_in_, "input_features")
-        elif self.node_labels_ is not None:
-            names = self.node_labels_
-        else:
-            names = [f"node_{index}" for index in range(self.n_features_in_)]
-        result = np.empty(self.n_features_in_, dtype=object)
-        result[:] = list(names)
-        return result
+    #     check_is_fitted(self, attributes=["n_features_in_"])
+    #     if input_features is not None:
+    #         names = _coerce_labels(input_features, self.n_features_in_, "input_features")
+    #     elif self.node_labels_ is not None:
+    #         names = self.node_labels_
+    #     else:
+    #         names = [f"node_{index}" for index in range(self.n_features_in_)]
+    #     result = np.empty(self.n_features_in_, dtype=object)
+    #     result[:] = list(names)
+    #     return result
 
 __all__ = [
     "Transitioner",
