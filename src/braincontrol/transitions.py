@@ -216,16 +216,9 @@ def _get_transition_indices(
         for transition, (source, target) in enumerate(pairs)
     ]
 
-# TODO: Make more memory efficient by predefining empty arrays that have
-# n_transitions x n_timepoints x n_nodes. See old implementation:
-#     # TODO: This should be exposed by nctpy! 0.001 is hardcoded for now, but it would be better if we could import STEP from nctpy so we always use nctpy as origin 
-#     if system == "continuous":
-#         n_state_time_points = int(np.round(T / 0.001) + 1)
-#         n_control_time_points = n_state_time_points
-#     else:
-#         n_state_time_points = T + 1
-#         n_control_time_points = T
-# TODO: Make more computaionally efficient by using parallelization. 
+# TODO (#26): Make more memory efficient by predefining empty arrays that have
+# n_transitions x n_timepoints x n_nodes. 
+# TODO (#26): Make more computaionally efficient by using parallelization. 
 def get_transition_trajectories(
     A,
     X,
@@ -911,7 +904,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 transform_node_labels,
             )
 
-
     # TODO: Work on state_labels
     def transform(
         self,
@@ -1076,6 +1068,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                     name="control_trajectory",
                     )
 
+    # TODO: Not sure if this works currently. 
     def get_feature_names_out(self, input_features=None):
         """Return names for the node-level energy columns."""
         
