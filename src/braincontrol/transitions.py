@@ -64,6 +64,7 @@ from nctpy.utils import matrix_normalization
 ###############################################################################
 
 # TODO: This function is too long
+# TODO: This function should be placed elsewhere and then imported
 def _get_transition_indices(
     n_states,
     transitions,
@@ -229,7 +230,8 @@ def _get_transition_indices(
 
 # TODO (#26): Make more memory efficient by predefining empty arrays that have
 # n_transitions x n_timepoints x n_nodes. 
-# TODO (#26): Make more computaionally efficient by using parallelization. 
+# TODO (#26): Make more computaionally efficient by using parallelization.
+# TODO: This function should be placed elsewhere and imported
 def get_transition_trajectories(
     A,
     X,
@@ -324,6 +326,7 @@ def get_transition_trajectories(
         errors,
     )
 
+# TODO: Should be placed elsewhere and then imported
 def get_transition_energy(control_trajectories):
     """Integrate control trajectories for every transition.
 
