@@ -41,8 +41,9 @@ from braincontrol.utils.validation.schema import (
     _validate_transform_node_labels,
     _get_node_count,
     _get_common_node_count,
-    _get_state_labels
-    )
+    _get_state_labels,
+    _validate_state_labels,
+)
 
 from braincontrol.utils.resolving import (
     _resolve_A,
@@ -817,6 +818,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             node_labels,
             state_labels,
         ) = self._process_states(states)
+        
+        # Validate state-label consistency.
+        _validate_state_labels(state_labels)
     
         X = states["X"]
         X0 = states["X0"]
@@ -928,7 +932,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             transform_node_labels,
         )
 
-    # TODO: Work on state_labels
     def transform(
         self,
         A,
@@ -937,8 +940,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         xr="xf",
         X=None,
         X0=None,
-        Xf=None,
-        state_labels=None,
+        Xf=None
     ):
         """Compute control energy for state transitions."""
     
@@ -978,13 +980,14 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             n_initial_states,
             state_node_counts,
             state_node_labels,
+            state_labels,
         ) = self._transform_states(
             X,
             X0,
             Xf,
             xr,
         )
-    
+            
         # Combine transform-time node metadata.
         node_counts = {
             **matrix_node_counts,

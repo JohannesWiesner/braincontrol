@@ -15,106 +15,58 @@ import xarray as xr
 # to pass state label themselves. Only in this case we would need this function
 # because only then we would need to check that the user state labels input 
 # is valid and can be parsed into a index object
-def _coerce_labels(labels, expected_length, parameter_name):
-    """Convert and validate labels as a pandas Index or MultiIndex.
+# def _coerce_labels(labels, expected_length, parameter_name):
+#     """Convert and validate labels as a pandas Index or MultiIndex.
 
-    List-like input is converted to a named Index. Existing Index names are
-    preserved. MultiIndex input must have a name for every level. The number
-    of labels must match ``expected_length`` when provided.
-    """
+#     List-like input is converted to a named Index. Existing Index names are
+#     preserved. MultiIndex input must have a name for every level. The number
+#     of labels must match ``expected_length`` when provided.
+#     """
     
-    if isinstance(labels, (str, bytes, Mapping, pd.DataFrame)):
-        raise TypeError(
-            f"{parameter_name} must be a list-like, Index, or MultiIndex object"
-        )
+#     if isinstance(labels, (str, bytes, Mapping, pd.DataFrame)):
+#         raise TypeError(
+#             f"{parameter_name} must be a list-like, Index, or MultiIndex object"
+#         )
 
-    if isinstance(labels, pd.MultiIndex):
-        index = labels.copy()
+#     if isinstance(labels, pd.MultiIndex):
+#         index = labels.copy()
 
-        if any(name is None for name in index.names):
-            raise ValueError(
-                f"All levels of {parameter_name} must have a name"
-            )
+#         if any(name is None for name in index.names):
+#             raise ValueError(
+#                 f"All levels of {parameter_name} must have a name"
+#             )
 
-    elif isinstance(labels, pd.Index):
-        index = labels.copy()
+#     elif isinstance(labels, pd.Index):
+#         index = labels.copy()
 
-    else:
-        try:
-            values = list(labels)
-        except TypeError as error:
-            raise TypeError(
-                f"{parameter_name} must be a list-like, Index, "
-                "or MultiIndex object"
-            ) from error
+#     else:
+#         try:
+#             values = list(labels)
+#         except TypeError as error:
+#             raise TypeError(
+#                 f"{parameter_name} must be a list-like, Index, "
+#                 "or MultiIndex object"
+#             ) from error
 
-        default_name = {
-            "state_labels": "state",
-            "node_labels": "node",
-        }.get(parameter_name, parameter_name)
+#         default_name = {
+#             "state_labels": "state",
+#             "node_labels": "node",
+#         }.get(parameter_name, parameter_name)
 
-        index = pd.Index(values, name=default_name)
+#         index = pd.Index(values, name=default_name)
 
-    if len(index) == 0:
-        raise ValueError(
-            f"{parameter_name} must contain at least one value"
-        )
+#     if len(index) == 0:
+#         raise ValueError(
+#             f"{parameter_name} must contain at least one value"
+#         )
 
-    if expected_length is not None and len(index) != expected_length:
-        raise ValueError(
-            f"{parameter_name} must contain {expected_length} values; "
-            f"got {len(index)}"
-        )
+#     if expected_length is not None and len(index) != expected_length:
+#         raise ValueError(
+#             f"{parameter_name} must contain {expected_length} values; "
+#             f"got {len(index)}"
+#         )
 
-    return index
-
-def _state_transition_index(state_labels, order):
-    """Build an index describing state transitions.
-
-    Each label is replaced by a ``(source, target)`` pair according to
-    ``order``. For MultiIndex input, the original levels and their names are
-    preserved.
-    """
-    n_states = len(state_labels)
-    _, transition_indices = _set_transition_order(
-        n_states,
-        order,
-    )
-
-    if isinstance(state_labels, pd.MultiIndex):
-        level_names = state_labels.names
-        level_values = [
-            state_labels.get_level_values(level).to_numpy()
-            for level in range(state_labels.nlevels)
-        ]
-
-        transition_values = [
-            [
-                (values[source], values[target])
-                for _, source, target in transition_indices
-            ]
-            for values in level_values
-        ]
-
-        return pd.MultiIndex.from_arrays(
-            transition_values,
-            names=level_names,
-        )
-
-    transition_values = [
-        (state_labels[source], state_labels[target])
-        for _, source, target in transition_indices
-    ]
-
-    # Keep each (source, target) tuple as one scalar Index value.
-    values = np.empty(len(transition_values), dtype=object)
-    values[:] = transition_values
-
-    return pd.Index(
-        values,
-        name=state_labels.name,
-    )
-
+#     return index
 
 def _get_trajectory_array(
     array,
