@@ -3,12 +3,20 @@
 """
 Created on Thu Oct  1 13:49:16 2026
 
-Validation helpers for all objects that have nodes, i.e. matrices and states
+Validation helpers to check schema meta data like
+
+- Number of nodes
+- Node labels
+- State Labels
 
 @author: johannes.wiesner
 """
 
 import pandas as pd
+
+###############################################################################
+## Validation helpers for node-objects, i.e. states and matrices
+###############################################################################
 
 # TODO: Not sure if this is the right place for this function
 def _get_node_count(array):
@@ -156,7 +164,8 @@ def _get_common_node_labels(node_labels):
 
     return None
 
-# FIXME: Put this logic into _validate_transform_schema
+# FIXME: Put this logic into _validate_transform_schema, as it's only used
+# once?
 def _validate_transform_node_labels(
     fitted_node_labels,
     transform_node_labels,
@@ -183,3 +192,33 @@ def _validate_transform_node_labels(
             "Node labels provided during transform do not match "
             "the node labels established during fit."
         )
+        
+###############################################################################
+## Validation helpers for state labels
+###############################################################################
+
+def _get_state_labels(obj):
+    """Return state labels if available or None.
+
+    Parameters
+    ----------
+    obj : object
+        State object from which to extract state labels. For a pandas Series,
+        the name identifies its single state. For a pandas DataFrame, the
+        index identifies its states.
+
+    Returns
+    -------
+    pandas.Index or None
+        State labels if available, otherwise None.
+    """
+    if isinstance(obj, pd.Series):
+        if obj.name is None:
+            return None
+
+        return pd.Index([obj.name])
+
+    if isinstance(obj, pd.DataFrame):
+        return obj.index
+
+    return None

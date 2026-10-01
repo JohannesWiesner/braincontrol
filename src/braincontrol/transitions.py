@@ -33,7 +33,7 @@ from braincontrol.utils.validation.states import (
     _validate_transition_strategy
     )
 
-from braincontrol.utils.validation.node_objects import (
+from braincontrol.utils.validation.schema import (
     _validate_node_counts,
     _get_node_labels,
     _validate_node_labels,
@@ -41,6 +41,7 @@ from braincontrol.utils.validation.node_objects import (
     _validate_transform_node_labels,
     _get_node_count,
     _get_common_node_count,
+    _get_state_labels
     )
 
 from braincontrol.utils.resolving import (
@@ -635,11 +636,12 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         return masker.transform(imgs)
     
     def _process_states(self, states):
-        """Transform state inputs into nctpy-digestible format and extract their schema metadata."""
+        """Process state inputs and extract their schema metadata."""
     
         states_processed = {}
         node_counts = {}
         node_labels = {}
+        state_labels = {}
     
         for name, state in states.items():
     
@@ -650,24 +652,25 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 states_processed[name] = state
                 node_counts[name] = None
                 node_labels[name] = None
+                state_labels[name] = None
                 continue
     
-            # validate that object is 1D/2D array-ish
             _validate_state_array(state, name)
-            state_processed = np.asarray(state)
-            
-            # get number of nodes from preprocesed state and node_labels from 
-            # original input
-            n_nodes = _get_node_count(state_processed)
+    
+            # Extract labels before converting to a NumPy array.
             node_labels[name] = _get_node_labels(state)
+            state_labels[name] = _get_state_labels(state)
+    
+            state_processed = np.asarray(state)
     
             states_processed[name] = state_processed
-            node_counts[name] = n_nodes
+            node_counts[name] = _get_node_count(state_processed)
     
         return (
             states_processed,
             node_counts,
             node_labels,
+            state_labels,
         )
     
     def _fit_states(
@@ -691,9 +694,12 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             "xr": xr,
         }
     
-        _, node_counts, node_labels = self._process_states(
-            states
-        )
+        (
+            _,
+            node_counts,
+            node_labels,
+            _,
+        ) = self._process_states(states)
     
         return node_counts, node_labels
     
@@ -805,9 +811,12 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         }
     
         # Process states and extract their schema metadata.
-        states, node_counts, node_labels = self._process_states(
-            states
-        )
+        (
+            states,
+            node_counts,
+            node_labels,
+            state_labels,
+        ) = self._process_states(states)
     
         X = states["X"]
         X0 = states["X0"]
@@ -852,8 +861,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             n_initial_states,
             node_counts,
             node_labels,
+            state_labels,
         )
-
+    
     def _transform_matrices(
         self,
         A,
