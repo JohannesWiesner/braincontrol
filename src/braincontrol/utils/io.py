@@ -11,6 +11,10 @@ import pandas as pd
 from collections.abc import Mapping
 import xarray as xr
 
+# TODO: We can deprecate this for now. It's only needed when we allow user
+# to pass state label themselves. Only in this case we would need this function
+# because only then we would need to check that the user state labels input 
+# is valid and can be parsed into a index object
 def _coerce_labels(labels, expected_length, parameter_name):
     """Convert and validate labels as a pandas Index or MultiIndex.
 

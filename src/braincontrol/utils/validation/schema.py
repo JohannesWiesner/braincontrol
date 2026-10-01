@@ -18,7 +18,6 @@ import pandas as pd
 ## Validation helpers for node-objects, i.e. states and matrices
 ###############################################################################
 
-# TODO: Not sure if this is the right place for this function
 def _get_node_count(array):
     """Return the number of nodes in a state object.
 
@@ -69,7 +68,6 @@ def _validate_node_counts(node_counts):
             f"Got {counts}."
         )
 
-# TODO: Not sure if this is the right place for this function
 def _get_common_node_count(node_counts):
     """Return the common node count from validated node counts.
 
@@ -90,7 +88,6 @@ def _get_common_node_count(node_counts):
 
     return None
 
-# TODO: Not sure if this is the right place for this function
 def _get_node_labels(obj):
     """Return node labels if available or None.
 
@@ -143,7 +140,6 @@ def _validate_node_labels(node_labels):
                     f"{name_a} and {name_b} have different node labels."
                 )
                 
-# TODO: Not sure if this is the right place for this function
 def _get_common_node_labels(node_labels):
     """Return the common node labels from validated node labels.
 
@@ -222,3 +218,27 @@ def _get_state_labels(obj):
         return obj.index
 
     return None
+
+def _validate_state_labels(state_labels):
+    """Validate state-label consistency across state inputs.
+
+    Parameters
+    ----------
+    state_labels : dict
+        Mapping of state-input names to state labels. For separate initial
+        and final state inputs, X0 and Xf must either both provide state
+        labels or both be unlabeled.
+
+    Raises
+    ------
+    ValueError
+        If only one of X0 and Xf provides state labels.
+    """
+    X0_labels = state_labels["X0"]
+    Xf_labels = state_labels["Xf"]
+
+    if (X0_labels is None) != (Xf_labels is None):
+        raise ValueError(
+            "X0 and Xf must either both provide state labels "
+            "or both be unlabeled."
+        )
