@@ -132,6 +132,7 @@ transitioner = Transitioner(
     energy_type="minimal",
     rho=None,
     S=None,
+    xr=None,
 )
 ```
 
@@ -139,14 +140,70 @@ For minimal energy, `Transitioner` internally resolves these parameters to the
 values required by `nctpy`: `rho` is set to a positive solver value and `S` to
 a zero matrix.
 
-Mixing `energy_type="minimal"` with a non-`None` `rho` or `S` raises a
-`ValueError`. Conversely, optimal energy requires both parameters.
+Mixing `energy_type="minimal"` with a non-`None` `rho`, `S`, or `xr` raises a
+`ValueError`. Conversely, optimal energy requires all three parameters.
+
+### Reference state
+
+The trajectory reference state `xr` is part of the `Transitioner`
+configuration. It can be `"zero"`, `"x0"`, `"xf"`, or `"midpoint"` and
+defaults to `"xf"`. A custom reference can be a NumPy vector, list, tuple, or
+pandas Series with one value per network node:
+
+```python
+transitioner = Transitioner(
+    A=adjacency,
+    T=1,
+    xr=reference_state[:, None],
+)
+
+transitioner.fit(states)
+```
+
+When transforming a different set of states, pass an empirical
+`xr_override` to `transform` to replace the instance reference for that call.
+Omitting it, or passing `None`, uses the instance reference:
+
+```python
+energy = transitioner.transform(
+    new_states,
+    xr_override=new_reference_state,
+)
+```
+
+A single-state niimg-like reference can be supplied when a compatible masker
+is configured. It is masked to an `(n_nodes, 1)` vector during `fit`:
+
+```python
+transitioner = Transitioner(
+    A=adjacency,
+    T=1,
+    masker=masker,
+    xr=reference_image,
+)
+
+transitioner.fit(state_images)
+```
+
+For `energy_type="minimal"`, the reference does not participate in the cost
+and must be set to `None` when the instance is created:
+
+```python
+transitioner = Transitioner(
+    A=adjacency,
+    T=1,
+    energy_type="minimal",
+    rho=None,
+    S=None,
+    xr=None,
+)
+```
 
 ### Node labels
 
 Node labels are established during `fit` and reused for subsequent calls to
-`transform`. If no labels are supplied, tabular input uses the columns of the
-resolved state DataFrame.
+`transform`. DataFrame columns, Series indices, and fitted masker metadata are
+used as inferred labels. NumPy arrays, lists, and tuples remain unlabelled.
 
 For plain list-like labels:
 
@@ -162,9 +219,18 @@ energy = transitioner.transform(
 )
 ```
 
-The fitted node labels become the columns of the returned energy DataFrame.
+The fitted node labels become the columns of every returned energy DataFrame.
 Transform input must contain the same number of nodes as the data seen during
-`fit`.
+`fit`. Labelled transform input must have exactly the fitted labels in exactly
+the fitted order; mismatched or reordered labels raise an error. Unlabelled
+input is assumed to already follow the fitted node order. Labels supplied only
+during `transform` do not replace absent fitted labels.
+
+The concrete input representation may change between `fit` and `transform`
+when it can be mapped into the fitted node space. For example, an estimator
+fitted on image data can transform an unlabelled array containing the same
+nodes. Image-like transform input requires a compatible masker that was fitted
+during `fit`.
 
 For pandas DataFrame input, node labels can be inferred directly from the
 columns:

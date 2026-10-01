@@ -116,6 +116,7 @@ def test_transition_trajectories_match_nctpy(transition_data):
         system="continuous",
         rho=1.0,
         S=S,
+        xr="xf",
     )
 
     assert trajectories.shape == (3, 2, 6)
@@ -202,10 +203,14 @@ def test_resolve_state_matrix_returns_dataframe(transition_data):
     """Check that a NumPy state matrix resolves to a two-dimensional DataFrame."""
     _, states = transition_data
 
-    resolved = _resolve_state_input(X=states)
+    resolved, X_type, xr, xr_type, node_labels = _resolve_state_input(X=states)
 
     assert isinstance(resolved, pd.DataFrame)
     np.testing.assert_array_equal(resolved.to_numpy(), states)
+    assert X_type == "tabular_like"
+    assert xr == "xf"
+    assert xr_type == "named"
+    assert node_labels is None
 
 
 def test_resolve_dataframe_preserves_labels(transition_data):
@@ -217,18 +222,19 @@ def test_resolve_dataframe_preserves_labels(transition_data):
         columns=pd.Index(["A", "B"], name="node"),
     )
 
-    resolved = _resolve_state_input(X=frame)
+    resolved, _, _, _, node_labels = _resolve_state_input(X=frame)
 
     assert resolved is not frame
     assert resolved.index.equals(frame.index)
     assert resolved.columns.equals(frame.columns)
+    assert node_labels.equals(frame.columns)
 
 
 def test_resolve_numpy_endpoints_returns_two_state_dataframe(transition_data):
     """Check that separate NumPy endpoints become two rows in a DataFrame."""
     _, states = transition_data
 
-    resolved = _resolve_state_input(x0=states[0], xf=states[1])
+    resolved, _, _, _, _ = _resolve_state_input(x0=states[0], xf=states[1])
 
     assert resolved.shape == (2, 2)
     np.testing.assert_array_equal(resolved.to_numpy(), states[:2])
@@ -241,10 +247,14 @@ def test_resolve_series_endpoints_preserves_node_labels(transition_data):
     x0 = pd.Series(states[0], index=node_labels)
     xf = pd.Series(states[1], index=node_labels)
 
-    resolved = _resolve_state_input(x0=x0, xf=xf)
+    resolved, _, _, _, node_labels_inferred = _resolve_state_input(
+        x0=x0,
+        xf=xf,
+    )
 
     assert resolved.shape == (2, 2)
     assert resolved.columns.equals(node_labels)
+    assert node_labels_inferred.equals(node_labels)
 
 
 def test_resolve_state_input_requires_one_complete_input_mode(transition_data):
@@ -285,10 +295,12 @@ def test_resolve_niimg_X_is_always_4d():
     """Check that a single 3D image resolves to a singleton 4D image."""
     image = nib.Nifti1Image(np.ones((2, 1, 1)), np.eye(4))
 
-    resolved = _resolve_state_input(X=image)
+    resolved, X_type, _, _, node_labels = _resolve_state_input(X=image)
 
     assert resolved.ndim == 4
     assert resolved.shape == (2, 1, 1, 1)
+    assert X_type == "niimg_like"
+    assert node_labels is None
 
 
 def test_resolve_niimg_endpoints_returns_two_volume_image():
@@ -296,7 +308,7 @@ def test_resolve_niimg_endpoints_returns_two_volume_image():
     x0 = nib.Nifti1Image(np.ones((2, 1, 1)), np.eye(4))
     xf = nib.Nifti1Image(np.zeros((2, 1, 1)), np.eye(4))
 
-    resolved = _resolve_state_input(x0=x0, xf=xf)
+    resolved, _, _, _, _ = _resolve_state_input(x0=x0, xf=xf)
 
     assert resolved.ndim == 4
     assert resolved.shape == (2, 1, 1, 2)
@@ -400,7 +412,7 @@ def test_transitioner_fits_array_states(transition_data):
     assert transitioner.n_nodes_in_ == 2
     assert transitioner.n_features_in_ == 2
     assert transitioner.X_type_ == "tabular_like"
-    assert transitioner.node_labels_.equals(pd.RangeIndex(2))
+    assert transitioner.node_labels_ is None
     np.testing.assert_array_equal(transitioner.A_, adjacency)
 
 
@@ -430,6 +442,171 @@ def test_transitioner_can_use_pre_normalized_adjacency(transition_data):
     ).fit(states)
 
     np.testing.assert_array_equal(transitioner.A_norm_, adjacency)
+
+
+@pytest.mark.parametrize("xr", ["zero", "x0", "xf", "midpoint"])
+def test_transitioner_accepts_named_reference_states(transition_data, xr):
+    """Check that every reference-state name supported by nctpy is retained."""
+    adjacency, states = transition_data
+
+    transitioner = Transitioner(
+        A=adjacency,
+        T=0.002,
+        xr=xr,
+    ).fit(pd.DataFrame(states))
+
+    assert transitioner.xr_ == xr
+
+
+@pytest.mark.parametrize(
+    "xr",
+    [
+        np.array([0.25, 0.75]),
+        np.array([[0.25], [0.75]]),
+        [0.25, 0.75],
+        (0.25, 0.75),
+        pd.Series([0.25, 0.75], index=["left", "right"]),
+    ],
+)
+def test_transitioner_resolves_tabular_reference_state(transition_data, xr):
+    """Check every tabular reference type becomes an nctpy column vector."""
+    adjacency, states = transition_data
+
+    transitioner = Transitioner(
+        A=adjacency,
+        T=0.002,
+        xr=xr,
+    ).fit(pd.DataFrame(states))
+
+    assert transitioner.xr_.shape == (2, 1)
+    np.testing.assert_array_equal(transitioner.xr_.ravel(), [0.25, 0.75])
+    if isinstance(xr, np.ndarray):
+        assert not np.shares_memory(transitioner.xr_, xr)
+
+
+@pytest.mark.parametrize(
+    ("xr", "error", "message"),
+    [
+        (np.ones((1, 2)), ValueError, "one-dimensional or a column vector"),
+        (np.ones((3, 1)), ValueError, "same number of nodes"),
+        (np.array([[np.nan], [1.0]]), ValueError, "only finite"),
+        (np.array([["a"], ["b"]]), TypeError, "numeric values"),
+        ("unknown", ValueError, "xr must be one of"),
+    ],
+)
+def test_transitioner_validates_reference_state(
+    transition_data, xr, error, message
+):
+    """Check reference vectors and names before invoking nctpy."""
+    adjacency, states = transition_data
+
+    with pytest.raises(error, match=message):
+        Transitioner(A=adjacency, T=0.002, xr=xr).fit(pd.DataFrame(states))
+
+
+def test_transitioner_defaults_reference_state_to_xf(transition_data):
+    """Check that the fitted reference defaults to each transition target."""
+    adjacency, states = transition_data
+
+    transitioner = Transitioner(A=adjacency, T=0.002).fit(
+        pd.DataFrame(states)
+    )
+
+    assert transitioner.xr_ == "xf"
+
+
+def test_transitioner_fit_does_not_accept_reference_override(transition_data):
+    """Check that reference configuration is not accepted by fit."""
+    adjacency, states = transition_data
+
+    with pytest.raises(TypeError, match="unexpected keyword argument 'xr'"):
+        Transitioner(A=adjacency, T=0.002).fit(states, xr="midpoint")
+
+
+@pytest.mark.parametrize(
+    "state_kwargs",
+    [
+        {"X": np.ones((2, 3))},
+        {"x0": np.ones(3), "xf": np.zeros(3)},
+    ],
+)
+def test_reference_state_must_match_state_node_count(state_kwargs):
+    """Check xr against both matrix and separate-endpoint state inputs."""
+    with pytest.raises(ValueError, match="same number of nodes as the state input"):
+        Transitioner(
+            A=np.eye(3),
+            T=0.002,
+            xr=[0.25, 0.75],
+        ).fit(**state_kwargs)
+
+
+def test_transitioner_masks_3d_reference_image(transition_data):
+    """Check that a 3D reference image becomes an nctpy node vector."""
+    adjacency, states = transition_data
+    labels = nib.Nifti1Image(
+        np.array([1, 2], dtype=np.int16).reshape(2, 1, 1),
+        np.eye(4),
+    )
+    reference = nib.Nifti1Image(
+        np.array([0.25, 0.75]).reshape(2, 1, 1),
+        np.eye(4),
+    )
+    masker = NiftiLabelsMasker(
+        labels_img=labels,
+        standardize=None,
+        reports=False,
+        keep_masked_labels=False,
+    )
+
+    transitioner = Transitioner(
+        A=adjacency,
+        T=0.002,
+        masker=masker,
+        xr=reference,
+    ).fit(pd.DataFrame(states))
+
+    assert transitioner.xr_.shape == (2, 1)
+    np.testing.assert_allclose(transitioner.xr_.ravel(), [0.25, 0.75])
+
+    image_energies = transitioner.transform(
+        pd.DataFrame(states),
+        order="combinations",
+    )
+    array_energies = Transitioner(
+        A=adjacency,
+        T=0.002,
+    ).fit_transform(
+        pd.DataFrame(states),
+        xr_override=np.array([[0.25], [0.75]]),
+        order="combinations",
+    )
+    np.testing.assert_allclose(image_energies, array_energies)
+
+
+def test_image_reference_requires_masker(transition_data):
+    """Check that image references cannot silently bypass parcellation."""
+    adjacency, states = transition_data
+    reference = nib.Nifti1Image(np.ones((2, 1, 1)), np.eye(4))
+
+    with pytest.raises(ValueError, match="Image-like xr requires a masker"):
+        Transitioner(
+            A=adjacency,
+            T=0.002,
+            xr=reference,
+        ).fit(pd.DataFrame(states))
+
+
+def test_reference_image_must_contain_one_state(transition_data):
+    """Check that xr represents exactly one image reference state."""
+    adjacency, states = transition_data
+    reference = nib.Nifti1Image(np.ones((2, 1, 1, 2)), np.eye(4))
+
+    with pytest.raises(ValueError, match="exactly one state"):
+        Transitioner(
+            A=adjacency,
+            T=0.002,
+            xr=reference,
+        ).fit(pd.DataFrame(states))
 
 
 @pytest.mark.parametrize("normalize_A", [None, 1, "yes"])
@@ -492,6 +669,7 @@ def test_transitioner_resolves_minimal_energy_solver_parameters(
         energy_type="minimal",
         rho=None,
         S=None,
+        xr=None,
     ).fit(states)
 
     assert transitioner.rho_ == 1.0
@@ -499,6 +677,38 @@ def test_transitioner_resolves_minimal_energy_solver_parameters(
         transitioner.S_,
         np.zeros_like(adjacency),
     )
+
+
+def test_transitioner_requires_none_reference_for_minimal_energy(
+    transition_data,
+):
+    """Check that minimal energy explicitly disables its reference state."""
+    adjacency, states = transition_data
+    transitioner = Transitioner(
+        A=adjacency,
+        T=0.002,
+        energy_type="minimal",
+        rho=None,
+        S=None,
+    )
+
+    with pytest.raises(ValueError, match="xr must be None"):
+        transitioner.fit(states)
+
+
+def test_minimal_energy_with_none_reference_can_transform(transition_data):
+    """Check the internal solver fallback for reference-free minimal energy."""
+    adjacency, states = transition_data
+    energies = Transitioner(
+        A=adjacency,
+        T=0.002,
+        energy_type="minimal",
+        rho=None,
+        S=None,
+        xr=None,
+    ).fit_transform(states, xr_override=None, order="combinations")
+
+    assert energies.shape == (3, 2)
 
 
 def test_transitioner_transform_returns_energy_dataframe(transition_data):
@@ -510,8 +720,99 @@ def test_transitioner_transform_returns_energy_dataframe(transition_data):
 
     assert isinstance(energies, pd.DataFrame)
     assert energies.shape == (3, 2)
-    assert energies.columns.equals(transitioner.node_labels_)
+    assert transitioner.node_labels_ is None
+    assert energies.columns.equals(pd.RangeIndex(2))
     assert transitioner.get_errors().shape == (3, 2)
+
+
+def test_transitioner_transform_accepts_new_reference_state(transition_data):
+    """Check that transform can use a reference specific to its new states."""
+    adjacency, states = transition_data
+    new_states = states + np.array([0.2, -0.1])
+    xr = [0.25, 0.75]
+    transitioner = Transitioner(A=adjacency, T=0.002).fit(states)
+
+    transformed = transitioner.transform(
+        new_states,
+        xr_override=xr,
+        order="combinations",
+    )
+    expected = Transitioner(A=adjacency, T=0.002).fit_transform(
+        new_states,
+        xr_override=xr,
+        order="combinations",
+    )
+
+    pd.testing.assert_frame_equal(transformed, expected)
+    assert transitioner.xr == "xf"
+    assert transitioner.xr_ == "xf"
+
+
+def test_transitioner_transform_uses_custom_instance_reference(transition_data):
+    """Check that an omitted transform reference inherits custom instance xr."""
+    adjacency, states = transition_data
+    xr = np.array([0.25, 0.75])
+
+    inherited = Transitioner(A=adjacency, T=0.002, xr=xr).fit_transform(
+        states,
+        order="combinations",
+    )
+    explicit = Transitioner(A=adjacency, T=0.002).fit_transform(
+        states,
+        xr_override=xr,
+        order="combinations",
+    )
+
+    pd.testing.assert_frame_equal(inherited, explicit)
+
+
+def test_transitioner_transform_none_uses_instance_reference(
+    transition_data,
+):
+    """Check that transform uses the instance reference when xr is None."""
+    adjacency, states = transition_data
+    transitioner = Transitioner(A=adjacency, T=0.002).fit(states)
+
+    inherited = transitioner.transform(
+        states,
+        xr_override=None,
+        order="combinations",
+    )
+    omitted = transitioner.transform(states, order="combinations")
+
+    pd.testing.assert_frame_equal(inherited, omitted)
+
+
+def test_transitioner_transform_rejects_reference_for_minimal_energy(
+    transition_data,
+):
+    """Check that transform keeps minimal-energy control reference-free."""
+    adjacency, states = transition_data
+    transitioner = Transitioner(
+        A=adjacency,
+        T=0.002,
+        energy_type="minimal",
+        rho=None,
+        S=None,
+        xr=None,
+    ).fit(states)
+
+    with pytest.raises(ValueError, match="xr must be None"):
+        transitioner.transform(states, xr_override="xf")
+
+
+def test_transitioner_transform_rejects_reference_node_mismatch(
+    transition_data,
+):
+    """Check that transform-time xr matches the current state node count."""
+    adjacency, states = transition_data
+    transitioner = Transitioner(A=adjacency, T=0.002).fit(states)
+
+    with pytest.raises(ValueError, match="same number of nodes"):
+        transitioner.transform(
+            states,
+            xr_override=[0.0, 0.5, 1.0],
+        )
 
 
 def test_transitioner_fit_transform_accepts_order(transition_data):
@@ -654,8 +955,8 @@ def test_transitioner_validates_transform_time_state_label_length(
         )
 
 
-def test_transitioner_transform_requires_fitted_input_type(transition_data):
-    """Check that transform uses the same tabular/image modality as fit."""
+def test_image_transform_requires_fitted_masker(transition_data):
+    """Check that cross-representation image input needs a fitted masker."""
     adjacency, states = transition_data
     transitioner = Transitioner(A=adjacency, T=0.002).fit(states)
     image = nib.Nifti1Image(
@@ -663,8 +964,107 @@ def test_transitioner_transform_requires_fitted_input_type(transition_data):
         np.eye(4),
     )
 
-    with pytest.raises(TypeError, match="must match the type used during fit"):
+    with pytest.raises(ValueError, match="requires a masker fitted during fit"):
         transitioner.transform(image)
+
+
+def test_transitioner_accepts_unlabelled_tabular_data_after_image_fit(
+    transition_data,
+):
+    """Check that transform accepts another representation of fitted nodes."""
+    adjacency, states = transition_data
+    labels = nib.Nifti1Image(
+        np.array([1, 2], dtype=np.int16).reshape(2, 1, 1),
+        np.eye(4),
+    )
+    image = nib.Nifti1Image(
+        states.T.reshape(2, 1, 1, 3),
+        np.eye(4),
+    )
+    masker = NiftiLabelsMasker(
+        labels_img=labels,
+        standardize=None,
+        reports=False,
+        keep_masked_labels=False,
+    )
+    transitioner = Transitioner(
+        A=adjacency,
+        T=0.002,
+        masker=masker,
+    ).fit(image)
+
+    image_energies = transitioner.transform(image, order="combinations")
+    tabular_energies = transitioner.transform(states, order="combinations")
+
+    np.testing.assert_allclose(tabular_energies, image_energies)
+    assert tabular_energies.columns.equals(transitioner.node_labels_)
+
+
+@pytest.mark.parametrize(
+    "transform_labels",
+    [
+        ["right", "left"],
+        ["left", "other"],
+    ],
+)
+def test_transitioner_rejects_mismatched_transform_node_labels(
+    transition_data,
+    transform_labels,
+):
+    """Check that transform node identities and order exactly match fit."""
+    adjacency, states = transition_data
+    fitted_labels = ["left", "right"]
+    transitioner = Transitioner(A=adjacency, T=0.002).fit(
+        pd.DataFrame(states, columns=fitted_labels)
+    )
+    transform_states = pd.DataFrame(states, columns=transform_labels)
+
+    with pytest.raises(ValueError, match="exactly match the fitted node labels"):
+        transitioner.transform(transform_states)
+
+
+def test_transitioner_accepts_matching_transform_node_labels(transition_data):
+    """Check that identical fitted and transform node labels are accepted."""
+    adjacency, states = transition_data
+    node_labels = pd.Index(["left", "right"], name="node")
+    fitted_states = pd.DataFrame(states, columns=node_labels)
+    transitioner = Transitioner(A=adjacency, T=0.002).fit(fitted_states)
+
+    energies = transitioner.transform(
+        fitted_states.copy(),
+        order="combinations",
+    )
+
+    assert energies.columns.equals(node_labels)
+
+
+def test_transitioner_accepts_unlabelled_input_after_labelled_fit(
+    transition_data,
+):
+    """Check that unlabelled transform input is assumed to use fitted order."""
+    adjacency, states = transition_data
+    fitted_labels = pd.Index(["left", "right"], name="node")
+    transitioner = Transitioner(A=adjacency, T=0.002).fit(
+        pd.DataFrame(states, columns=fitted_labels)
+    )
+
+    energies = transitioner.transform(states, order="combinations")
+
+    assert energies.columns.equals(fitted_labels)
+
+
+def test_transitioner_keeps_output_unlabelled_after_unlabelled_fit(
+    transition_data,
+):
+    """Check that transform labels do not replace absent fitted labels."""
+    adjacency, states = transition_data
+    transitioner = Transitioner(A=adjacency, T=0.002).fit(states)
+    labelled_states = pd.DataFrame(states, columns=["left", "right"])
+
+    energies = transitioner.transform(labelled_states, order="combinations")
+
+    assert transitioner.node_labels_ is None
+    assert energies.columns.equals(pd.RangeIndex(2))
 
 
 def test_transitioner_transform_requires_fitted_node_count(transition_data):
