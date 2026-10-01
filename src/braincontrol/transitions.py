@@ -30,10 +30,10 @@ from braincontrol.utils.validation.states import (
     _validate_transition_states,
     _validate_xr,
     _validate_state_array,
+    _validate_transition_strategy
     )
 
 from braincontrol.utils.validation.node_objects import (
-    _validate_transition_strategy,
     _validate_node_counts,
     _get_node_labels,
     _validate_node_labels,

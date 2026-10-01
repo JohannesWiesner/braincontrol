@@ -82,6 +82,8 @@ def _validate_xr(xr, energy_type):
 def _validate_transition_states(X=None, X0=None, Xf=None):
     """Validate transition-state inputs.
 
+    Answers: Is the X / X0 / Xf configuration valid?
+
     Either ``X`` must be provided alone, or ``X0`` and ``Xf`` must
     both be provided.
 
@@ -115,7 +117,7 @@ def _validate_transition_states(X=None, X0=None, Xf=None):
         raise ValueError(
             "X0 and Xf must be provided together."
         )
-
+    
 def _validate_state_array(value, name):
     """Validate an array-like state object.
 
@@ -160,4 +162,51 @@ def _validate_state_array(value, name):
     if not np.all(np.isfinite(state_array)):
         raise ValueError(
             f"{name} must contain only finite values."
+        )
+        
+def _validate_transition_strategy(
+    transitions,
+    X,
+):
+    """Validate the transition strategy for the state-input configuration.
+
+    When states are provided as a single set ``X``, the transition strategy
+    must describe transitions within that set. When states are provided as
+    separate initial and final sets ``X0`` and ``Xf``, the transition strategy
+    must describe transitions between those sets.
+
+    Parameters
+    ----------
+    transitions : str
+        Transition strategy to validate.
+    X : object or None
+        Single-set state input. If not None, states are assumed to be provided
+        as ``X``. If None, states are assumed to be provided as separate
+        ``X0`` and ``Xf`` inputs.
+
+    Raises
+    ------
+    ValueError
+        If ``transitions`` is not compatible with the state-input
+        configuration.
+    """
+
+    if X is not None:
+        valid_transitions = (
+            "directed",
+            "undirected",
+            "directed_with_self",
+            "self",
+        )
+    else:
+        valid_transitions = (
+            "all_to_all",
+            "paired",
+        )
+
+    if transitions not in valid_transitions:
+        raise ValueError(
+            f"transitions={transitions!r} is not compatible "
+            "with the provided state inputs. "
+            f"Expected one of {valid_transitions}."
         )

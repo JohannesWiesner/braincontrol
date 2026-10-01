@@ -183,30 +183,3 @@ def _validate_transform_node_labels(
             "Node labels provided during transform do not match "
             "the node labels established during fit."
         )
-
-# TODO: Not sure if this is the right place for this function
-def _validate_transition_strategy(
-    transitions,
-    X,
-):
-    """Validate transition strategy against the state-input configuration."""
-
-    if X is not None:
-        valid_transitions = (
-            "directed",
-            "undirected",
-            "directed_with_self",
-            "self",
-        )
-    else:
-        valid_transitions = (
-            "all_to_all",
-            "paired",
-        )
-
-    if transitions not in valid_transitions:
-        raise ValueError(
-            f"transitions={transitions!r} is not compatible "
-            "with the provided state inputs. "
-            f"Expected one of {valid_transitions}."
-        )
