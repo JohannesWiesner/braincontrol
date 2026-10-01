@@ -36,7 +36,8 @@ from braincontrol.utils.validation import (
     _get_common_node_count,
     _get_common_node_labels,
     _validate_transform_node_labels,
-    _get_node_count
+    _get_node_count,
+    _validate_transition_strategy
 )
 
 from nctpy.energies import get_control_inputs, integrate_u
@@ -118,6 +119,7 @@ def _get_transition_indices(
         )
 
     # Transitions within a single state set.
+    # TODO: Validation not needed anymore here as we have _validate_transition_strategy now
     if n_initial_states is None:
         _validate_choice(
             transitions,
@@ -399,6 +401,11 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             Time system used for adjacency normalization and control computation.
         expm_version : {"scipy", "eig"}, default="scipy"
             Matrix-exponential implementation forwarded to ``nctpy``.
+        transitions : {"directed", "undirected", "directed_with_self", "self", \
+                       "all_to_all", "paired"}, default="directed"
+            Strategy used to select state transitions. The available strategies
+            depend on whether states are provided as X or as separate X0 and Xf
+            inputs.
         masker : nilearn.maskers.BaseMasker or None, default=None
             Masker used to convert Niimg-like state inputs to node-level state
             representations. Required when Niimg-like state inputs are provided.
@@ -426,6 +433,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         rho=1.0,
         system="continuous",
         expm_version="scipy",
+        transitions="directed",
         masker=None,
         memory=None,
         memory_level=1,
@@ -440,6 +448,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         self.rho = rho
         self.system = system
         self.expm_version = expm_version
+        self.transitions = transitions
         self.masker = masker
         self.memory = memory
         self.memory_level = memory_level
@@ -454,6 +463,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         energy_type,
         system,
         expm_version,
+        transitions,
         normalize_A,
         c,
         store_state_trajectories,
@@ -476,6 +486,18 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             expm_version,
             "expm_version",
             ("scipy", "eig"),
+        )
+        _validate_choice(
+            transitions,
+            "transitions",
+            (
+                "directed",
+                "undirected",
+                "directed_with_self",
+                "self",
+                "all_to_all",
+                "paired",
+            ),
         )
     
         # Validate normalization parameters.
@@ -505,6 +527,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         self.energy_type_ = energy_type
         self.system_ = system
         self.expm_version_ = expm_version
+        self.transitions_ = transitions
         self.normalize_A_ = normalize_A
         self.c_ = c
         self.store_state_trajectories_ = store_state_trajectories
@@ -651,6 +674,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     
         # Validate state-input configuration.
         _validate_transition_states(X, X0, Xf)
+        _validate_transition_strategy(self.transitions_,X)
         _validate_xr(xr, self.energy_type_)
     
         states = {
@@ -660,7 +684,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             "xr": xr,
         }
     
-        _, node_counts, node_labels = self._process_states(states)
+        _, node_counts, node_labels = self._process_states(
+            states
+        )
     
         return node_counts, node_labels
     
@@ -707,6 +733,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             self.energy_type,
             self.system,
             self.expm_version,
+            self.transitions,
             self.normalize_A,
             self.c,
             self.store_state_trajectories,
@@ -760,6 +787,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     
         # Validate state-input configuration.
         _validate_transition_states(X, X0, Xf)
+        _validate_transition_strategy(self.transitions_,X,)
         _validate_xr(xr, self.energy_type_)
     
         states = {
@@ -778,9 +806,8 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         X0 = states["X0"]
         Xf = states["Xf"]
         xr = states["xr"]
-        
-        # TODO: Not sure if the we should put the following also into _process_states?
-        # FIXME: The following is too long
+    
+        # TODO: the following is too long
         # Arrange transition states for NCT computation.
         if X is not None:
             if X.ndim == 1:
@@ -811,7 +838,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                     )
     
                 xr = xr[0]
-
+    
         return (
             X,
             xr,
@@ -886,7 +913,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
 
 
     # TODO: Work on state_labels
-    # TODO: I think the transitions argument is better off in init, see issue #7
     def transform(
         self,
         A,
@@ -896,8 +922,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         X=None,
         X0=None,
         Xf=None,
-        *,
-        transitions,
         state_labels=None,
     ):
         """Compute control energy for state transitions."""
@@ -910,6 +934,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 "energy_type_",
                 "system_",
                 "expm_version_",
+                "transitions_",
                 "normalize_A_",
                 "c_",
                 "n_nodes_",
@@ -972,7 +997,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         # Determine requested state transitions.
         transition_indices = _get_transition_indices(
             X.shape[0],
-            transitions,
+            self.transitions_,
             n_initial_states=n_initial_states,
         )
     
