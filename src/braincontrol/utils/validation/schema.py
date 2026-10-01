@@ -12,6 +12,7 @@ Validation helpers to check schema meta data like
 @author: johannes.wiesner
 """
 
+import numpy as np
 import pandas as pd
 
 ###############################################################################
@@ -227,18 +228,151 @@ def _validate_state_labels(state_labels):
     state_labels : dict
         Mapping of state-input names to state labels. For separate initial
         and final state inputs, X0 and Xf must either both provide state
-        labels or both be unlabeled.
+        labels or both be unlabeled. If labeled, their index structures
+        must be compatible.
 
     Raises
     ------
     ValueError
-        If only one of X0 and Xf provides state labels.
+        If only one of X0 and Xf provides state labels, or if their
+        index structures are incompatible.
     """
     X0_labels = state_labels["X0"]
     Xf_labels = state_labels["Xf"]
 
+    # X0 and Xf must either both be labeled or both be unlabeled.
     if (X0_labels is None) != (Xf_labels is None):
         raise ValueError(
             "X0 and Xf must either both provide state labels "
             "or both be unlabeled."
         )
+
+    # Nothing else needs to be checked if X0 and Xf are unlabeled.
+    if X0_labels is None:
+        return
+
+    X0_is_multiindex = isinstance(
+        X0_labels,
+        pd.MultiIndex,
+    )
+    Xf_is_multiindex = isinstance(
+        Xf_labels,
+        pd.MultiIndex,
+    )
+
+    # X0 and Xf must use the same kind of index.
+    if X0_is_multiindex != Xf_is_multiindex:
+        raise ValueError(
+            "X0 and Xf state labels must use compatible index "
+            "structures. Both must be either Index or MultiIndex."
+        )
+
+    # For MultiIndex labels, the level structure must match.
+    if X0_is_multiindex:
+        if X0_labels.nlevels != Xf_labels.nlevels:
+            raise ValueError(
+                "X0 and Xf state-label MultiIndexes must have "
+                "the same number of levels."
+            )
+
+        if X0_labels.names != Xf_labels.names:
+            raise ValueError(
+                "X0 and Xf state-label MultiIndexes must have "
+                "the same level names."
+            )
+
+def _get_transition_labels(
+    state_labels,
+    transition_indices,
+    n_initial_states=None,
+):
+    """Return labels for the requested state transitions.
+
+    Parameters
+    ----------
+    state_labels : dict
+        Mapping of state-input names to state labels.
+
+    transition_indices : list of tuple
+        State transitions represented as
+        ``(transition, source, target)``.
+
+    n_initial_states : int or None, default=None
+        Number of initial states when separate X0 and Xf inputs are used.
+        If None, transitions are assumed to be defined within a single
+        state set X.
+
+    Returns
+    -------
+    pandas.Index or pandas.MultiIndex or None
+        Labels identifying the requested state transitions, or None if
+        the states are unlabeled.
+    """
+    # Transitions within a single state set.
+    if n_initial_states is None:
+        source_labels = state_labels["X"]
+        target_labels = state_labels["X"]
+        target_offset = 0
+
+    # Transitions from X0 to Xf.
+    else:
+        source_labels = state_labels["X0"]
+        target_labels = state_labels["Xf"]
+        target_offset = n_initial_states
+
+    # State-label validation guarantees that X0 and Xf are either both
+    # labeled or both unlabeled.
+    if source_labels is None:
+        return None
+
+    # Preserve the individual levels of a MultiIndex.
+    if isinstance(source_labels, pd.MultiIndex):
+        transition_values = []
+
+        for level in range(source_labels.nlevels):
+            source_values = source_labels.get_level_values(
+                level
+            ).to_numpy()
+
+            target_values = target_labels.get_level_values(
+                level
+            ).to_numpy()
+
+            level_transitions = [
+                (
+                    source_values[source],
+                    target_values[target - target_offset],
+                )
+                for _, source, target in transition_indices
+            ]
+
+            transition_values.append(
+                level_transitions
+            )
+
+        return pd.MultiIndex.from_arrays(
+            transition_values,
+            names=source_labels.names,
+        )
+
+    # For a regular Index, represent each transition as a
+    # (source, target) tuple.
+    transition_values = [
+        (
+            source_labels[source],
+            target_labels[target - target_offset],
+        )
+        for _, source, target in transition_indices
+    ]
+
+    # Keep each (source, target) tuple as one scalar Index value.
+    values = np.empty(
+        len(transition_values),
+        dtype=object,
+    )
+    values[:] = transition_values
+
+    return pd.Index(
+        values,
+        name="transition",
+    )
