@@ -316,6 +316,8 @@ def _get_transition_labels(
         the states are unlabeled.
     """
     # Transitions within a single state set.
+    # TODO: Feels a bit weird to still define source and target labels
+    # when just X is provided
     if n_initial_states is None:
         source_labels = state_labels["X"]
         target_labels = state_labels["X"]
