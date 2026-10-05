@@ -463,6 +463,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         self.store_state_trajectories = store_state_trajectories
         self.store_control_trajectories = store_control_trajectories
     
+    # TODO: Outsource code as process_parameters for example processing.py and import it?
     def _fit_parameters(
         self,
         T,
