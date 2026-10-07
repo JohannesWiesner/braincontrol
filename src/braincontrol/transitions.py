@@ -1094,6 +1094,39 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         
         return transition_energy
     
+    def fit_transform(
+        self,
+        A,
+        B="identity",
+        S="identity",
+        X=None,
+        X0=None,
+        Xf=None,
+        xr="xf",
+    ):
+        """Fit the transformer and compute control energy for state transitions."""
+    
+        self.fit(
+            A=A,
+            B=B,
+            S=S,
+            X=X,
+            X0=X0,
+            Xf=Xf,
+            xr=xr,
+        )
+    
+        return self.transform(
+            A=A,
+            B=B,
+            S=S,
+            X=X,
+            X0=X0,
+            Xf=Xf,
+            xr=xr,
+        )
+    
+    
     def get_errors(self):
         """Return numerical errors from the most recent transform call."""
         
