@@ -1,441 +1,473 @@
-<img src="assets/logo.svg" alt="braincontrol logo" width="400">
+`<img src="assets/logo.svg" alt="braincontrol logo" width="400">`{=html}
+
+# braincontrol
+
+`braincontrol` provides Network Control Theory (NCT) tools for
+neuroimaging data. Its main estimator, `Transitioner`, computes
+node-level control energy for transitions between brain states using
+`nctpy`, with support for NumPy, pandas, and Niimg-like state inputs.
 
 ## Installation
 
-Install via `pip install braincontrol`
+``` bash
+pip install braincontrol
+```
 
-## State transitions
+`braincontrol` requires Python 3.9 or newer.
 
-`braincontrol.transitions` computes requested transitions between states using
-Network Control Theory. For tabular input, states are represented by rows and
-nodes by columns.
+## Quick start
 
-`Transitioner` follows a scikit-learn-style `fit` / `transform` API. Parameters
-that define the network and control model are supplied when the estimator is
-created. Node information is established during `fit`, while transition-specific
-state labels and transition order are supplied during `transform`.
+`Transitioner` follows a scikit-learn-style `fit` / `transform`
+workflow. Estimator parameters such as the time horizon and transition
+strategy are configured when the estimator is created. Empirical
+matrices and states are supplied to `fit`, `transform`, or
+`fit_transform`.
 
-```python
+``` python
+import numpy as np
+
 from braincontrol.transitions import Transitioner
 
+# Example network with three nodes.
+A = np.array([
+    [0.0, 0.4, 0.2],
+    [0.4, 0.0, 0.3],
+    [0.2, 0.3, 0.0],
+])
+
+# Rows are states, columns are nodes.
+X = np.array([
+    [1.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0],
+    [0.0, 0.0, 1.0],
+])
+
 transitioner = Transitioner(
-    A=adjacency,
     T=1,
-    B="identity",
-    system="continuous",
+    transitions="directed",
 )
 
-transitioner.fit(states)  # states: (n_states, n_nodes)
-
-energy = transitioner.transform(
-    states,
-    order="permutations",
-)
-
-errors = transitioner.get_errors()
-state_trajectories, control_trajectories = (
-    transitioner.get_transition_arrays()
-)
-```
-
-When fitting and transforming the same states, `fit_transform` can be used
-instead:
-
-```python
 energy = transitioner.fit_transform(
-    states,
-    order="permutations",
+    A=A,
+    X=X,
+)
+
+print(energy)
+```
+
+For unlabeled NumPy input, the returned energy has shape
+`(n_transitions, n_nodes)`. If node or state labels are available,
+`Transitioner` preserves them in a pandas `DataFrame`.
+
+## State input
+
+State input can be supplied in two ways:
+
+1.  A single state set `X`.
+2.  Separate initial and final state sets `X0` and `Xf`.
+
+These representations cannot be mixed.
+
+For two-dimensional tabular input, rows represent states and columns
+represent nodes. A one-dimensional input represents a single state.
+
+### Single state set
+
+``` python
+transitioner = Transitioner(
+    T=1,
+    transitions="directed",
+)
+
+energy = transitioner.fit_transform(
+    A=A,
+    X=X,
 )
 ```
 
-`transform` returns a pandas DataFrame with one row per transition and one
-column per node.
+The available transition strategies depend on the number of states in
+`X`:
 
-### Adjacency matrix normalization
+  -------------------------------------------------------------------------------
+  Strategy                 One state         Multiple states   Meaning
+  ------------------------ ----------------- ----------------- ------------------
+  `"directed"`             No                Yes               All directed
+                                                               transitions
+                                                               between distinct
+                                                               states
 
-By default, `Transitioner` normalizes the adjacency matrix with
-`nctpy.utils.matrix_normalization` for the selected time system. The original
-validated adjacency matrix is stored as `A_`, while the matrix used for the
-control computation is stored as `A_norm_`. The input `A` is not modified.
+  `"undirected"`           No                Yes               One transition for
+                                                               each pair of
+                                                               distinct states
 
-The normalization constant `c` defaults to `1`:
+  `"directed_with_self"`   No                Yes               All directed
+                                                               transitions,
+                                                               including
+                                                               self-transitions
 
-```python
+  `"self"`                 Yes               Yes               One
+                                                               self-transition
+                                                               for each state
+  -------------------------------------------------------------------------------
+
+For a single state, `"self"` is the only valid strategy.
+
+``` python
+single_state = np.array([1.0, 0.0, 0.0])
+
 transitioner = Transitioner(
-    A=adjacency,
+    T=1,
+    transitions="self",
+)
+
+energy = transitioner.fit_transform(
+    A=A,
+    X=single_state,
+)
+```
+
+### Separate initial and final states
+
+Use `X0` and `Xf` when initial and final states are represented by
+separate state sets.
+
+``` python
+X0 = np.array([
+    [1.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0],
+])
+
+Xf = np.array([
+    [0.0, 0.0, 1.0],
+    [1.0, 0.0, 0.0],
+])
+
+transitioner = Transitioner(
+    T=1,
+    transitions="paired",
+)
+
+energy = transitioner.fit_transform(
+    A=A,
+    X0=X0,
+    Xf=Xf,
+)
+```
+
+Two strategies are available:
+
+-   `"all_to_all"` computes every transition from a state in `X0` to a
+    state in `Xf`.
+-   `"paired"` computes transitions between corresponding states in `X0`
+    and `Xf`. The two inputs must contain the same number of states.
+
+## Fit and transform
+
+`fit` validates the estimator configuration and empirical inputs and
+learns the node schema:
+
+``` python
+transitioner.fit(
+    A=A,
+    X=X,
+)
+```
+
+The fitted schema is stored in:
+
+``` python
+transitioner.n_nodes_
+transitioner.node_labels_
+```
+
+`transform` validates new inputs against that fitted schema and computes
+transition energy:
+
+``` python
+energy = transitioner.transform(
+    A=A,
+    X=X,
+)
+```
+
+When fitting and transforming the same data, use:
+
+``` python
+energy = transitioner.fit_transform(
+    A=A,
+    X=X,
+)
+```
+
+## Matrix inputs
+
+`A` is the adjacency matrix and must have shape `(n_nodes, n_nodes)`.
+
+The control input matrix `B` defaults to `"identity"`:
+
+``` python
+energy = transitioner.fit_transform(
+    A=A,
+    B="identity",
+    X=X,
+)
+```
+
+For optimal control energy, the state-trajectory constraint matrix `S`
+also defaults to `"identity"`.
+
+All empirical matrix and state inputs must describe the same number of
+nodes.
+
+## Adjacency matrix normalization
+
+By default, `Transitioner` normalizes `A` during `transform` using
+`nctpy.utils.matrix_normalization` for the selected system.
+
+``` python
+transitioner = Transitioner(
     T=1,
     system="continuous",
     c=2,
 )
 ```
 
-To provide an adjacency matrix that is already normalized, disable
-normalization explicitly:
+To use the adjacency matrix as supplied:
 
-```python
+``` python
 transitioner = Transitioner(
-    A=normalized_adjacency,
     T=1,
-    system="continuous",
     normalize_A=False,
 )
 ```
 
-### State input
+## Energy type
 
-State input can be supplied as a NumPy array or pandas DataFrame:
+Optimal control energy is the default:
 
-```python
-energy = transitioner.fit_transform(
-    X=states,
-    order="permutations",
-)
-```
-
-For tabular input, `X` must have shape `(n_states, n_nodes)`.
-
-To provide exactly two states, pass the source and target separately. Both
-arguments are required, and they cannot be combined with `X`:
-
-```python
-energy = transitioner.fit_transform(
-    x0=source_state,
-    xf=target_state,
-    order="permutations",
-)
-```
-
-`x0` and `xf` can be one-dimensional NumPy arrays or pandas Series. They must
-use the same input type and contain the same number of nodes.
-
-The `order` argument determines which transitions are computed:
-
-- `"combinations"` computes each unordered pair once.
-- `"permutations"` computes both directions between distinct states.
-- `"product"` computes all directed transitions, including self-transitions.
-- `"stability"` computes only self-transitions.
-
-`"combinations"` and `"permutations"` require at least two states. `"product"`
-and `"stability"` can also be used with a single state.
-
-### Energy type
-
-`energy_type="optimal"` is the default and requires both `rho` and `S`.
-
-Minimal control energy is selected explicitly by setting both optimal-energy
-parameters to `None`:
-
-```python
+``` python
 transitioner = Transitioner(
-    A=adjacency,
+    T=1,
+    energy_type="optimal",
+    rho=1.0,
+)
+```
+
+For optimal energy, `rho`, `S`, and `xr` participate in the control
+problem. `S` defaults to `"identity"` and `xr` defaults to `"xf"`.
+
+Minimal control energy is selected explicitly:
+
+``` python
+transitioner = Transitioner(
     T=1,
     energy_type="minimal",
     rho=None,
+)
+
+energy = transitioner.fit_transform(
+    A=A,
     S=None,
+    X=X,
     xr=None,
 )
 ```
 
-For minimal energy, `Transitioner` internally resolves these parameters to the
-values required by `nctpy`: `rho` is set to a positive solver value and `S` to
-a zero matrix.
+For minimal energy, `rho`, `S`, and `xr` must be compatible with the
+minimal-energy configuration.
 
-Mixing `energy_type="minimal"` with a non-`None` `rho`, `S`, or `xr` raises a
-`ValueError`. Conversely, optimal energy requires all three parameters.
+## Reference state
 
-### Reference state
+For optimal energy, `xr` can be one of the supported symbolic reference
+states:
 
-The trajectory reference state `xr` is part of the `Transitioner`
-configuration. It can be `"zero"`, `"x0"`, `"xf"`, or `"midpoint"` and
-defaults to `"xf"`. A custom reference can be a NumPy vector, list, tuple, or
-pandas Series with one value per network node:
-
-```python
-transitioner = Transitioner(
-    A=adjacency,
-    T=1,
-    xr=reference_state[:, None],
-)
-
-transitioner.fit(states)
-```
-
-When transforming a different set of states, pass an empirical
-`xr_override` to `transform` to replace the instance reference for that call.
-Omitting it, or passing `None`, uses the instance reference:
-
-```python
-energy = transitioner.transform(
-    new_states,
-    xr_override=new_reference_state,
+``` python
+energy = transitioner.fit_transform(
+    A=A,
+    X=X,
+    xr="xf",
 )
 ```
 
-A single-state niimg-like reference can be supplied when a compatible masker
-is configured. It is masked to an `(n_nodes, 1)` vector during `fit`:
+Supported string values are:
 
-```python
-transitioner = Transitioner(
-    A=adjacency,
-    T=1,
-    masker=masker,
-    xr=reference_image,
-)
+-   `"zero"`
+-   `"x0"`
+-   `"xf"`
+-   `"midpoint"`
 
-transitioner.fit(state_images)
-```
+A custom reference state can also be supplied as a supported empirical
+state input. The reference state must describe exactly one state.
 
-For `energy_type="minimal"`, the reference does not participate in the cost
-and must be set to `None` when the instance is created:
+## Labels and schema
 
-```python
-transitioner = Transitioner(
-    A=adjacency,
-    T=1,
-    energy_type="minimal",
-    rho=None,
-    S=None,
-    xr=None,
-)
-```
+`braincontrol` preserves labels when they can be inferred from pandas
+inputs.
 
-### Node labels
+For a `DataFrame`:
 
-Node labels are established during `fit` and reused for subsequent calls to
-`transform`. DataFrame columns, Series indices, and fitted masker metadata are
-used as inferred labels. NumPy arrays, lists, and tuples remain unlabelled.
+-   rows represent states;
+-   the index provides state labels;
+-   columns provide node labels.
 
-For plain list-like labels:
+``` python
+import pandas as pd
 
-```python
-transitioner.fit(
-    states,
-    node_labels=["node_A", "node_B", "node_C"],
-)
-
-energy = transitioner.transform(
-    states,
-    order="permutations",
-)
-```
-
-The fitted node labels become the columns of every returned energy DataFrame.
-Transform input must contain the same number of nodes as the data seen during
-`fit`. Labelled transform input must have exactly the fitted labels in exactly
-the fitted order; mismatched or reordered labels raise an error. Unlabelled
-input is assumed to already follow the fitted node order. Labels supplied only
-during `transform` do not replace absent fitted labels.
-
-The concrete input representation may change between `fit` and `transform`
-when it can be mapped into the fitted node space. For example, an estimator
-fitted on image data can transform an unlabelled array containing the same
-nodes. Image-like transform input requires a compatible masker that was fitted
-during `fit`.
-
-For pandas DataFrame input, node labels can be inferred directly from the
-columns:
-
-```python
-states_df = pd.DataFrame(
-    states,
+states = pd.DataFrame(
+    [
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ],
+    index=["rest", "task", "recovery"],
     columns=["node_A", "node_B", "node_C"],
 )
 
-transitioner.fit(states_df)
-```
-
-An explicitly supplied pandas `MultiIndex` can be used for hierarchical node
-metadata. Every MultiIndex level must have a name:
-
-```python
-import pandas as pd
-
-node_labels = pd.MultiIndex.from_arrays(
-    [
-        ["association", "association", "sensory"],
-        ["default", "default", "visual"],
-        ["A", "B", "C"],
-    ],
-    names=["cortex", "network", "node"],
+adjacency = pd.DataFrame(
+    A,
+    index=states.columns,
+    columns=states.columns,
 )
-
-transitioner.fit(
-    states,
-    node_labels=node_labels,
-)
-
-energy = transitioner.transform(
-    states,
-    order="permutations",
-)
-```
-
-The node MultiIndex is preserved as the columns of the returned DataFrame.
-
-### State labels
-
-State labels describe the states supplied to each `transform` call. Unlike node
-labels, they are not fixed during `fit`, because different transform calls can
-contain different numbers of states.
-
-Plain list-like state labels are converted to an index named `"state"`:
-
-```python
-energy = transitioner.transform(
-    states,
-    state_labels=["rest", "task", "recovery"],
-    order="permutations",
-)
-```
-
-If the transform input is a pandas DataFrame and `state_labels` is not supplied,
-the DataFrame index is used instead.
-
-An existing pandas Index preserves its name:
-
-```python
-state_labels = pd.Index(
-    ["rest", "task", "recovery"],
-    name="condition",
-)
-
-energy = transitioner.transform(
-    states,
-    state_labels=state_labels,
-    order="permutations",
-)
-```
-
-A named `MultiIndex` can be used for hierarchical state metadata:
-
-```python
-state_labels = pd.MultiIndex.from_arrays(
-    [
-        ["baseline", "active", "baseline"],
-        ["rest", "task", "recovery"],
-    ],
-    names=["condition", "state"],
-)
-
-energy = transitioner.transform(
-    states,
-    state_labels=state_labels,
-    order="permutations",
-)
-```
-
-Each row of the returned DataFrame represents one transition. For a regular
-state Index, each row label is a `(source, target)` tuple. For a MultiIndex,
-the original levels and their names are preserved, and each level contains the
-corresponding `(source, target)` pair.
-
-For example, the hierarchical labels above can produce transition labels such
-as:
-
-```text
-condition                 state
-(baseline, active)        (rest, task)
-(active, baseline)        (task, rest)
-...
-```
-
-No additional endpoint level is added.
-
-### Neuroimaging input
-
-`Transitioner` also accepts Niimg-like state input when a compatible Nilearn
-masker is provided. A 4D image represents multiple states, with one state per
-3D volume. A single 3D image is treated as one state.
-
-```python
-from nilearn.maskers import NiftiLabelsMasker
 
 transitioner = Transitioner(
-    A=adjacency,
     T=1,
-    masker=NiftiLabelsMasker(labels_img=atlas),
+    transitions="directed",
 )
 
 energy = transitioner.fit_transform(
-    states_img,
-    order="permutations",
+    A=adjacency,
+    X=states,
 )
 ```
 
-The masker is cloned before fitting so that the user-provided masker instance
-is not modified. The fitted masker must expose the node information required by
-`Transitioner`.
+Node labels form part of the fitted schema. Transform-time node labels
+must therefore be compatible with the labels learned during `fit`.
 
-Two image-like endpoint states can also be supplied separately as `x0` and
-`xf`. Each endpoint must contain exactly one state.
+State labels are transform-time metadata rather than fitted schema. They
+are used to label the transitions produced by the current transform
+call.
 
-### Storing trajectories
+A pandas `Series` represents a single state: its index provides node
+labels, and its `name`, when present, provides the state label.
 
-State and control trajectories can be retained on the fitted estimator:
+Pandas `MultiIndex` objects are supported for hierarchical node and
+state metadata.
 
-```python
+### Separate `X0` and `Xf` labels
+
+When `X0` and `Xf` are supplied separately, they must either both
+provide state labels or both be unlabeled. If hierarchical state labels
+are represented by a `MultiIndex`, `X0` and `Xf` must use compatible
+MultiIndex structures.
+
+## Neuroimaging input
+
+State inputs may be Niimg-like objects when a compatible Nilearn masker
+is supplied.
+
+``` python
+from nilearn.maskers import NiftiLabelsMasker
+
+masker = NiftiLabelsMasker(
+    labels_img=atlas,
+)
+
 transitioner = Transitioner(
-    A=adjacency,
     T=1,
+    transitions="directed",
+    masker=masker,
+)
+
+energy = transitioner.fit_transform(
+    A=A,
+    X=states_img,
+)
+```
+
+For each Niimg-like input, `Transitioner` clones the configured masker,
+fits it on that input, and transforms the image data into a node-level
+array. The user-provided masker instance itself is not fitted in place.
+
+The resulting node representation must be compatible with the node
+schema established from the other empirical inputs.
+
+## Storing trajectories
+
+State and control trajectories can optionally be retained during
+`transform`:
+
+``` python
+transitioner = Transitioner(
+    T=1,
+    transitions="directed",
     store_state_trajectories=True,
     store_control_trajectories=True,
 )
 
 energy = transitioner.fit_transform(
-    states,
-    order="permutations",
-)
-
-state_trajectories, control_trajectories = (
-    transitioner.get_transition_arrays()
+    A=A,
+    X=X,
 )
 ```
 
-Set either storage option to `False` when the corresponding large intermediate
-array should not be retained. `get_transition_arrays()` then returns `None` for
-that array.
+Retrieve them with:
+
+``` python
+state_trajectories = transitioner.get_state_trajectories()
+control_trajectories = transitioner.get_control_trajectories()
+```
+
+The getters return `xarray.DataArray` objects with dimensions:
+
+``` text
+("time", "node", "transition")
+```
+
+Available node and transition labels are included as coordinates. If the
+corresponding storage option is disabled, the getter returns `None`.
+
+## Numerical errors
 
 Numerical errors reported by `nctpy` for the most recent transform are
 available with:
 
-```python
+``` python
 errors = transitioner.get_errors()
 ```
 
-### Caching
+## Main `Transitioner` parameters
 
-`Transitioner` inherits Nilearn's `CacheMixin`. Set `memory` to a directory or
-a `joblib.Memory` instance to cache the expensive state-transition computation:
-
-```python
-transitioner = Transitioner(
-    A=adjacency,
-    T=1,
-    memory="braincontrol_cache",
+``` python
+Transitioner(
+    T,
+    normalize_A=True,
+    c=1,
+    energy_type="optimal",
+    rho=1.0,
+    system="continuous",
+    expm_version="scipy",
+    transitions="directed",
+    masker=None,
+    memory=None,
     memory_level=1,
+    verbose=0,
+    store_state_trajectories=False,
+    store_control_trajectories=False,
 )
 ```
 
-Repeated calls with identical adjacency, states, control parameters, and
-transition settings reuse the cached computation. Changing any of those inputs
-creates a separate cache entry. Caching is disabled by default with
-`memory=None`.
+The empirical inputs `A`, `B`, `S`, `X`, `X0`, `Xf`, and `xr` are
+supplied to `fit`, `transform`, or `fit_transform`, rather than to the
+constructor.
 
-For image input, masking can additionally use the caching behavior of the
-supplied Nilearn masker.
+## Development
 
-## Tests
+Install the development dependencies and run the test suite with:
 
-Run the unit suite with:
-
-```bash
+``` bash
 python -m pytest -q
 ```
 
-The empirical neuroimaging tests download Nilearn and ENIGMA data and are
-therefore opt-in:
+## License
 
-```bash
-BRAINCONTROL_RUN_NEUROIMAGING_TESTS=1 \
-python -m pytest -m integration tests/test_transitions_neuroimaging_data.py
-```
+`braincontrol` is distributed under the MIT License.

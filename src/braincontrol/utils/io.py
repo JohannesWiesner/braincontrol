@@ -10,66 +10,6 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-# TODO: We can deprecate this for now. It's only needed when we allow user
-# to pass state label themselves. Only in this case we would need this function
-# because only then we would need to check that the user state labels input 
-# is valid and can be parsed into a index object
-
-# from collections.abc import Mapping
-
-# def _coerce_labels(labels, expected_length, parameter_name):
-#     """Convert and validate labels as a pandas Index or MultiIndex.
-
-#     List-like input is converted to a named Index. Existing Index names are
-#     preserved. MultiIndex input must have a name for every level. The number
-#     of labels must match ``expected_length`` when provided.
-#     """
-    
-#     if isinstance(labels, (str, bytes, Mapping, pd.DataFrame)):
-#         raise TypeError(
-#             f"{parameter_name} must be a list-like, Index, or MultiIndex object"
-#         )
-
-#     if isinstance(labels, pd.MultiIndex):
-#         index = labels.copy()
-
-#         if any(name is None for name in index.names):
-#             raise ValueError(
-#                 f"All levels of {parameter_name} must have a name"
-#             )
-
-#     elif isinstance(labels, pd.Index):
-#         index = labels.copy()
-
-#     else:
-#         try:
-#             values = list(labels)
-#         except TypeError as error:
-#             raise TypeError(
-#                 f"{parameter_name} must be a list-like, Index, "
-#                 "or MultiIndex object"
-#             ) from error
-
-#         default_name = {
-#             "state_labels": "state",
-#             "node_labels": "node",
-#         }.get(parameter_name, parameter_name)
-
-#         index = pd.Index(values, name=default_name)
-
-#     if len(index) == 0:
-#         raise ValueError(
-#             f"{parameter_name} must contain at least one value"
-#         )
-
-#     if expected_length is not None and len(index) != expected_length:
-#         raise ValueError(
-#             f"{parameter_name} must contain {expected_length} values; "
-#             f"got {len(index)}"
-#         )
-
-#     return index
-
 def _get_trajectory_array(
     trajectories,
     *,
