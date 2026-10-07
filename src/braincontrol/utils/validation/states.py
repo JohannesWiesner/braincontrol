@@ -97,7 +97,7 @@ def _validate_transition_states(X=None, X0=None, Xf=None):
     Raises
     ------
     ValueError
-        If the input combination or node labels are invalid.
+        If the transition-state input combination is invalid.
     """
 
     # X cannot be combined with X0 or Xf.

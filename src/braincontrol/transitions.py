@@ -515,7 +515,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         return node_counts, node_labels
     
     # TODO: Outsource to for example processing.py and import it?
-    # TODO: Add more extensive docstring
     def _process_niimg(self, imgs):
         """Fit and apply a masker to Niimg-like input.
     
@@ -540,9 +539,58 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         return masker.transform(imgs)
     
     # TODO: Outsource to for example processing.py and import it?
-    # TODO: Add more extensive docstring
     def _process_states(self, states):
-        """Process state inputs and extract their schema metadata."""
+        """Process state inputs and extract their schema metadata.
+    
+        Each state input is converted to the representation used internally by
+        the estimator while preserving available node and state labels as
+        separate metadata.
+    
+        Niimg-like inputs are first transformed into node-level arrays using
+        :meth:`_process_niimg`. Array-like inputs are validated and converted
+        to NumPy arrays. ``None`` and string inputs are retained unchanged,
+        because they may represent omitted or symbolic state inputs such as
+        the reference state ``xr``.
+    
+        Node and state labels are extracted before conversion to NumPy arrays
+        so that metadata provided by pandas objects is preserved.
+    
+        Parameters
+        ----------
+        states : dict
+            Mapping from state-input names to their values. Typically contains
+            the keys ``"X"``, ``"X0"``, ``"Xf"``, and ``"xr"``. Values may be
+            array-like, Niimg-like, strings, or ``None``.
+    
+        Returns
+        -------
+        states_processed : dict
+            Processed state inputs. Array-like and Niimg-like inputs are
+            represented as NumPy arrays. Strings and ``None`` are retained
+            unchanged.
+    
+        node_counts : dict
+            Number of nodes represented by each processed state input.
+            Entries are ``None`` for string or ``None`` inputs.
+    
+        node_labels : dict
+            Node labels extracted from each state input when available.
+            Entries are ``None`` when node labels cannot be inferred.
+    
+        state_labels : dict
+            State labels extracted from each state input when available.
+            Entries are ``None`` when state labels cannot be inferred.
+    
+        Raises
+        ------
+        TypeError
+            If a state input is not a supported array-like object, or if a
+            Niimg-like input is provided without a compatible masker.
+    
+        ValueError
+            If an array-like state input has an invalid dimensionality or
+            contains non-finite values.
+        """
     
         states_processed = {}
         node_counts = {}
