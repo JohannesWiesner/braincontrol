@@ -612,7 +612,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         Xf = states["Xf"]
         xr = states["xr"]
     
-        # FIXME: The following is too long!
+        # FIXME: The following is too long! What is this even doing?
         if X is not None:
             if X.ndim == 1:
                 X = X[np.newaxis, :]
@@ -632,7 +632,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 [X0, Xf],
                 axis=0,
             )
-    
+            
+        # FIXME: This should be done in _validate_xr. As xr can be 
+        # a niimg-like input by user this should be done after process states?
         if xr is not None and not isinstance(xr, str):
             if xr.ndim == 2:
                 if xr.shape[0] != 1:
