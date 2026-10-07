@@ -15,6 +15,9 @@ Validation helpers to check schema meta data like
 import numpy as np
 import pandas as pd
 
+# FIXME: This currently mixes validators and getters!
+# We could think about having validation/schema.py and processing/schema.py
+
 ###############################################################################
 ## Validation helpers for node-objects, i.e. states and matrices
 ###############################################################################
