@@ -48,6 +48,8 @@ from braincontrol.utils.resolving import (
     _resolve_rho
     )
 
+from braincontrol.utils.io import _get_trajectory_array
+
 import numpy as np
 import pandas as pd
 from nctpy.energies import get_control_inputs, integrate_u
@@ -1098,29 +1100,59 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         check_is_fitted(self, attributes=["errors_"])
         return self.errors_.copy()
 
-    # FIXME: We must make sure that node_labels is a list
-    # Update: It is a list-like object now
-    # def get_state_trajectories(self):
-    #     """Return retained state trajectories as a labelled xarray DataArray."""
-        
-    #     return _get_trajectory_array(
-    #                 getattr(self, "state_trajectories_", None),
-    #                 node_labels=self.node_labels_,
-    #                 transition_labels=self.transition_labels_,
-    #                 name="state_trajectories",
-    #                 )
-
-    # FIXME: We must make sure that node_labels is a list
-    # Update it is a list-like object now
-    # def get_control_trajectories(self):
-    #     """Return retained control trajectories as a labelled xarray DataArray."""
-        
-    #     return _get_trajectory_array(
-    #                 getattr(self, "control_trajectories_", None),
-    #                 node_labels=self.node_labels_,
-    #                 transition_labels=self.transition_labels_,
-    #                 name="control_trajectory",
-    #                 )
+    def get_state_trajectories(self):
+        """Return retained state trajectories as a labelled xarray DataArray.
+    
+        Returns
+        -------
+        xarray.DataArray or None
+            State trajectories from the most recent transform call, with
+            dimensions ``("time", "node", "transition")``. Returns None if
+            state trajectories were not retained.
+    
+        Notes
+        -----
+        State trajectories are retained only when
+        ``store_state_trajectories=True``.
+        """
+        check_is_fitted(
+            self,
+            attributes=["transition_labels_"],
+        )
+    
+        return _get_trajectory_array(
+            getattr(self, "state_trajectories_", None),
+            node_labels=self.node_labels_,
+            transition_labels=self.transition_labels_,
+            name="state_trajectories",
+        )
+    
+    def get_control_trajectories(self):
+        """Return retained control trajectories as a labelled xarray DataArray.
+    
+        Returns
+        -------
+        xarray.DataArray or None
+            Control trajectories from the most recent transform call, with
+            dimensions ``("time", "node", "transition")``. Returns None if
+            control trajectories were not retained.
+    
+        Notes
+        -----
+        Control trajectories are retained only when
+        ``store_control_trajectories=True``.
+        """
+        check_is_fitted(
+            self,
+            attributes=["transition_labels_"],
+        )
+    
+        return _get_trajectory_array(
+            getattr(self, "control_trajectories_", None),
+            node_labels=self.node_labels_,
+            transition_labels=self.transition_labels_,
+            name="control_trajectories",
+        )
 
     # TODO: Not sure if this works currently. 
     # def get_feature_names_out(self, input_features=None):
