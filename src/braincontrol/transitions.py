@@ -1154,21 +1154,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             name="control_trajectories",
         )
 
-    # TODO: Not sure if this works currently. 
-    # def get_feature_names_out(self, input_features=None):
-    #     """Return names for the node-level energy columns."""
-        
-    #     check_is_fitted(self, attributes=["n_features_in_"])
-    #     if input_features is not None:
-    #         names = _coerce_labels(input_features, self.n_features_in_, "input_features")
-    #     elif self.node_labels_ is not None:
-    #         names = self.node_labels_
-    #     else:
-    #         names = [f"node_{index}" for index in range(self.n_features_in_)]
-    #     result = np.empty(self.n_features_in_, dtype=object)
-    #     result[:] = list(names)
-    #     return result
-
 __all__ = [
     "Transitioner",
     "get_transition_trajectories",
