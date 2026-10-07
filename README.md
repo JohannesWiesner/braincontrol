@@ -1,4 +1,4 @@
-`<img src="assets/logo.svg" alt="braincontrol logo" width="400">`{=html}
+<img src="assets/logo_new_v2.svg" alt="braincontrol logo" width="400">
 
 # braincontrol
 
