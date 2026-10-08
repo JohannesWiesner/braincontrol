@@ -55,6 +55,7 @@ from braincontrol.utils.processing.transitions import (
     )
 
 from braincontrol.utils.processing.parameters import _get_rho
+from braincontrol.utils.processing.states import _get_xr
 
 import numpy as np
 import pandas as pd
@@ -610,7 +611,10 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         X = states["X"]
         X0 = states["X0"]
         Xf = states["Xf"]
-        xr = states["xr"]
+        xr = _get_xr(
+            states["xr"],
+            self.energy_type_,
+            )
     
         # FIXME: The following is too long! What is this even doing?
         if X is not None:
