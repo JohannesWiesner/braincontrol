@@ -4,8 +4,8 @@
 
 `braincontrol` provides Network Control Theory (NCT) tools for
 neuroimaging data. Its main estimator, `Transitioner`, computes
-node-level control energy for transitions between brain states using
-`nctpy`, with support for NumPy, pandas, and Niimg-like state inputs.
+node-level control energy for transitions between brain states using the
+[nctpy](https://github.com/LindenParkesLab/nctpy) package, with support for NumPy, pandas, and Niimg-like state inputs.
 
 ## Installation
 
