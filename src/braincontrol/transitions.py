@@ -249,14 +249,66 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         self.store_control_trajectories_ = store_control_trajectories
     
     # TODO: Outsource to for example processing.py and import it?
-    # TODO: Add more extensive docstring
     def _process_matrices(
         self,
         A,
         B,
         S,
     ):
-        """Validate and resolve matrix inputs and extract their schema metadata."""
+        """Validate and resolve matrix inputs and extract their node schema.
+
+        This method provides the common matrix-processing logic used during
+        fitting and transformation. It validates the supplied matrices,
+        resolves symbolic or omitted inputs into NumPy arrays, and checks
+        that all resulting matrices have compatible shapes.
+        
+        Node labels are extracted before conversion to preserve metadata
+        from pandas inputs. Node counts are extracted from the resolved
+        matrices and returned separately for subsequent schema validation.
+        
+        Parameters
+        ----------
+        A : array-like of shape (n_nodes, n_nodes)
+            Adjacency matrix defining the network. Its dimensions determine
+            the number of nodes used to resolve B and S.
+        
+        B : array-like or {"identity"}
+            Control input matrix. The string "identity" is resolved to an
+            identity matrix with the same dimensions as A.
+        
+        S : array-like, {"identity"}, or None
+            State-trajectory constraint matrix. For optimal energy,
+            "identity" is resolved to an identity matrix. For minimal
+            energy, None is resolved to a zero matrix.
+        
+        Returns
+        -------
+        A : ndarray
+            Resolved adjacency matrix.
+        
+        B : ndarray
+            Resolved control input matrix.
+        
+        S : ndarray
+            Resolved state-trajectory constraint matrix.
+        
+        node_counts : dict
+            Mapping from matrix names ("A", "B", "S") to their respective
+            node counts.
+        
+        node_labels : dict
+            Mapping from matrix names ("A", "B", "S") to their original
+            node labels, or None when labels are unavailable.
+        
+        Raises
+        ------
+        TypeError
+            If a matrix input has an unsupported type.
+        
+        ValueError
+            If a matrix input is invalid or the resolved matrices have
+            incompatible shapes.
+        """
     
         # Validate matrices.
         _validate_A(A)
@@ -434,7 +486,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             state_labels,
         )
     
-    # TODO: Add more extensive docstring
     def _fit_states(
         self,
         X,
@@ -488,30 +539,84 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         xr="xf"
     ):
         """Fit the Network Control Theory transformer.
-    
+        
+        Validate the estimator configuration, adjacency and control matrices,
+        and state inputs. Establish the node schema used to validate inputs
+        during subsequent calls to ``transform()``.
+        
+        State inputs can be provided either through ``X`` or through the
+        combination of ``X0`` and ``Xf``. Array-like inputs include NumPy
+        arrays, Python lists and tuples, and pandas Series and DataFrames.
+        Pandas node and state labels are preserved as metadata when available.
+        
+        For ``energy_type="minimal"``, ``rho``, ``S``, and ``xr`` must all
+        be None. The ``rho`` parameter is specified during estimator
+        initialization, while ``S`` and ``xr`` are supplied to this method.
+        These values are internally resolved to the representations
+        required by nctpy.
+        
         Parameters
         ----------
         A : array-like of shape (n_nodes, n_nodes)
-            Adjacency matrix.
+            Adjacency matrix defining the network. Its dimensions determine
+            the number of nodes in the fitted schema.
+        
         B : array-like of shape (n_nodes, n_nodes) or "identity", \
                 default="identity"
-            Control input matrix.
+            Control input matrix. The string "identity" specifies an
+            identity matrix.
+        
         S : array-like of shape (n_nodes, n_nodes), "identity", or None, \
                 default="identity"
-            State-trajectory constraint matrix.
+            State-trajectory constraint matrix. For optimal energy,
+            "identity" specifies an identity matrix. For minimal energy,
+            ``S`` must be None and is internally resolved to a zero matrix.
+        
         X : array-like, Niimg-like, or None, default=None
-            State input.
+            Set of states used to construct transitions. One-dimensional
+            inputs represent a single state, while two-dimensional inputs
+            contain one state per row.
+        
         X0 : array-like, Niimg-like, or None, default=None
-            Initial-state input.
+            Set of initial states. Must be provided together with ``Xf``
+            and cannot be combined with ``X``.
+        
         Xf : array-like, Niimg-like, or None, default=None
-            Final-state input.
+            Set of final states. Must be provided together with ``X0``
+            and cannot be combined with ``X``.
+        
         xr : array-like, Niimg-like, str, or None, default="xf"
-            Reference state.
-    
+            Reference state used for optimal control energy. Supported
+            symbolic values are "zero", "x0", "xf", and "midpoint".
+            For minimal energy, ``xr`` must be None and is internally
+            resolved to "zero".
+        
         Returns
         -------
         self : Transitioner
             Fitted estimator.
+        
+        Raises
+        ------
+        TypeError
+            If an input has an unsupported type.
+        
+        ValueError
+            If matrix or state inputs are invalid, the transition strategy
+            is incompatible with the supplied states, or the node counts
+            or labels are inconsistent.
+        
+        Notes
+        -----
+        Fitting establishes the following attributes:
+        
+        - ``n_nodes_``: Number of nodes in the fitted network.
+        - ``node_labels_``: Node labels extracted from the inputs, or None
+          when labels are unavailable.
+        
+        The fitted node schema is used to validate subsequent inputs to
+        ``transform()``. Control energies and trajectories are computed
+        during transformation, not fitting.
         """
         # Validate and store estimator parameters.
         self._fit_parameters(
@@ -563,7 +668,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     
         return self
 
-    # TODO: Add more extensive docstring
+    # TODO: In latest versions of nctpy, state-input can both be (N,) or (N,1)!
+    # So we can probably make processing of xr easier if we tie braincontrol
+    # to newer nctpy version
     def _transform_states(
         self,
         X,
@@ -657,7 +764,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             state_labels,
         )
     
-    # TODO: Add more extensive docstring
     def _transform_matrices(
         self,
         A,
@@ -736,7 +842,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             transform_node_labels,
         )
 
-    # TODO: Add more extensive docstring
     def transform(
         self,
         A,
@@ -747,7 +852,103 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         X0=None,
         Xf=None
     ):
-        """Compute control energy for state transitions."""
+        """Compute node-level control energy for state transitions.
+
+        Validate and process the supplied matrices and states, then compute
+        control energy for the transitions specified by ``self.transitions``.
+        
+        The estimator must be fitted before calling this method. All inputs
+        must be compatible with the node schema established during fitting,
+        including the number of nodes and any available node labels.
+        
+        State inputs can be provided either through ``X`` or through the
+        combination of ``X0`` and ``Xf``. Array-like inputs include NumPy
+        arrays, Python lists and tuples, and pandas Series and DataFrames.
+        Pandas node and state labels are preserved when available.
+        
+        For ``energy_type="minimal"``, ``rho``, ``S``, and ``xr`` must all
+        be None. The ``rho`` parameter is specified during estimator
+        initialization, while ``S`` and ``xr`` are supplied to this method.
+        These values are internally resolved to the representations
+        required by nctpy.
+        
+        Parameters
+        ----------
+        A : array-like of shape (n_nodes, n_nodes)
+            Adjacency matrix defining the network. The matrix is normalized
+            if ``normalize_A=True``.
+        
+        B : array-like of shape (n_nodes, n_nodes) or "identity", \
+                default="identity"
+            Control input matrix. The string "identity" specifies an
+            identity matrix.
+        
+        S : array-like of shape (n_nodes, n_nodes), "identity", or None, \
+                default="identity"
+            State-trajectory constraint matrix. For optimal energy,
+            "identity" specifies an identity matrix. For minimal energy,
+            ``S`` must be None and is internally resolved to a zero matrix.
+        
+        xr : array-like, Niimg-like, str, or None, default="xf"
+            Reference state used for optimal control energy. Supported
+            symbolic values are "zero", "x0", "xf", and "midpoint".
+            For minimal energy, ``xr`` must be None and is internally
+            resolved to "zero".
+        
+        X : array-like, Niimg-like, or None, default=None
+            Set of states used to construct transitions. One-dimensional
+            inputs represent a single state, while two-dimensional inputs
+            contain one state per row.
+        
+        X0 : array-like, Niimg-like, or None, default=None
+            Set of initial states. Must be provided together with ``Xf``
+            and cannot be combined with ``X``.
+        
+        Xf : array-like, Niimg-like, or None, default=None
+            Set of final states. Must be provided together with ``X0``
+            and cannot be combined with ``X``.
+        
+        Returns
+        -------
+        transition_energy : ndarray or pandas.DataFrame
+            Node-level control energy for each transition, with shape
+            (n_transitions, n_nodes). Rows represent transitions and
+            columns represent nodes.
+        
+            A pandas DataFrame is returned when node or transition labels
+            are available. Otherwise, a NumPy array is returned.
+        
+        Raises
+        ------
+        sklearn.exceptions.NotFittedError
+            If the estimator has not been fitted.
+        
+        TypeError
+            If an input has an unsupported type.
+        
+        ValueError
+            If matrix or state inputs are invalid, the transition strategy
+            is incompatible with the supplied states, or the node schema
+            differs from the fitted schema.
+        
+        Notes
+        -----
+        The following attributes are updated after each successful
+        transformation:
+        
+        - ``transition_labels_``: Labels identifying the computed
+          transitions, or None when unavailable.
+        - ``errors_``: Numerical errors reported during trajectory
+          computation.
+        - ``state_trajectories_``: Computed state trajectories, retained
+          only when ``store_state_trajectories=True``.
+        - ``control_trajectories_``: Computed control trajectories, retained
+          only when ``store_control_trajectories=True``.
+        
+        Stored trajectories and numerical errors can be accessed through
+        ``get_state_trajectories()``, ``get_control_trajectories()``,
+        and ``get_errors()``, respectively.
+        """
     
         check_is_fitted(
             self,
