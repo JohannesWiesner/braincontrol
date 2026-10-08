@@ -10,6 +10,9 @@ Helpers to resolve single value inputs
 
 def _get_rho(rho, energy_type):
     """Resolve rho to the value required by nctpy."""
+    
+    # TODO: Would be nice if nctpy would also just accept None then we 
+    # woulnd't have to do this
     if energy_type == "minimal":
         # nctpy requires positive rho even when S is zero.
         return 1.0
