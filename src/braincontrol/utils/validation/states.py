@@ -59,7 +59,8 @@ def _validate_xr(xr, energy_type):
         
         # FIXME: This is not needed anymore, nctpy now also accepts (N) or (N,1)
         # TODO: Just use _validate_state_array here + make sure that
-        # this array has never more than one state?
+        # this array has never more than one state? So xr is just a special form
+        # of _validate_state_array with the specification that it must be only one state!
         elif isinstance(xr, np.ndarray):
             if xr.ndim != 2 or xr.shape[1] != 1:
                 raise ValueError(
@@ -131,7 +132,8 @@ def _validate_state_array(value, name):
     value : array-like
         State object to validate. Supported types include lists, tuples,
         NumPy arrays, pandas Series, and pandas DataFrames. The state-object
-        must be either 1D (rows represent nodes) or 2D (columns represent nodes)
+        must be either 1D (rows represent nodes, a single column represents
+        one state) or 2D (columns represent nodes, rows represent states)
     name : str
         Name of the state object used in error messages.
 
@@ -169,6 +171,7 @@ def _validate_state_array(value, name):
             f"{name} must contain only finite values."
         )
         
+# See issue #45 can we make this better?
 def _validate_transition_strategy(
     transitions,
     X,
