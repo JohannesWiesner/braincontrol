@@ -468,6 +468,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 state_labels[name] = None
                 continue
     
+            # at this point, check that array-like objects fullfill all criteria
             _validate_state_array(state, name)
     
             # Extract labels before converting to a NumPy array.
@@ -746,6 +747,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             
         # FIXME: This should be done in _validate_xr. As xr can be 
         # a niimg-like input by user this should be done after process states?
+        # TODO: The dimension check belongs in _validate_xr
         if xr is not None and not isinstance(xr, str):
             if xr.ndim == 2:
                 if xr.shape[0] != 1:

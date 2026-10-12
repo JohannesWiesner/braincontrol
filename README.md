@@ -13,8 +13,6 @@ node-level control energy for transitions between brain states using the
 pip install braincontrol
 ```
 
-`braincontrol` requires Python 3.9 or newer.
-
 ## Quick start
 
 `Transitioner` follows a scikit-learn-style `fit` / `transform`

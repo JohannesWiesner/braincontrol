@@ -31,7 +31,7 @@ def _validate_xr(xr, energy_type):
 
     elif energy_type == "optimal":
 
-        # we can use _validate_choice here?
+        # TODO: we can use _validate_choice here?
         if isinstance(xr, str):
             if xr not in ("zero", "x0", "xf", "midpoint"):
                 raise ValueError(
@@ -56,6 +56,10 @@ def _validate_xr(xr, energy_type):
         # TODO: We must work on this. My current contract is: If the
         # object is 1D than rows represent nodes, but if it's 2D then columns
         # represent nodes. So nctpy wants a different shape than braincontrol.
+        
+        # FIXME: This is not needed anymore, nctpy now also accepts (N) or (N,1)
+        # TODO: Just use _validate_state_array here + make sure that
+        # this array has never more than one state?
         elif isinstance(xr, np.ndarray):
             if xr.ndim != 2 or xr.shape[1] != 1:
                 raise ValueError(
@@ -73,6 +77,7 @@ def _validate_xr(xr, energy_type):
                 )
 
         else:
+            # TODO: Can now be also (N,)
             raise TypeError(
                 "xr must be 'zero', 'x0', 'xf', 'midpoint', "
                 "a single Niimg-like object, or a NumPy array "
