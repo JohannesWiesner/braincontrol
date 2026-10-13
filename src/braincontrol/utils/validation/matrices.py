@@ -62,6 +62,7 @@ def _validate_square_matrix_or_identity(value, name):
 
 # FIXME: This function should not check if the input is a dataframe, it should
 # already expect it (?)
+# TODO: This could be placed into _validate_square_matrix
 def _validate_symmetric_dataframe_labels(obj, name):
     """Validate that row and column indices of a symmetric matrix DataFrame
     are the same.
