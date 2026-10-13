@@ -408,8 +408,10 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         Niimg-like inputs are first transformed into node-level arrays using
         :meth:`_process_niimg`. Array-like inputs are validated and converted
         to NumPy arrays. ``None`` and string inputs are retained unchanged,
-        because they may represent omitted or symbolic state inputs such as
-        the reference state ``xr``.
+        because they may represent omitted or symbolic state inputs.
+        The reference state ``xr`` is validated here and normalized to a
+        one-dimensional vector after label extraction. For minimal energy,
+        ``xr=None`` is resolved to "zero" for nctpy compatibility.
     
         Node and state labels are extracted before conversion to NumPy arrays
         so that metadata provided by pandas objects is preserved.
@@ -425,8 +427,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         -------
         states_processed : dict
             Processed state inputs. Array-like and Niimg-like inputs are
-            represented as NumPy arrays. Strings and ``None`` are retained
-            unchanged.
+            represented as NumPy arrays; ``xr`` arrays are one-dimensional.
+            Strings and ``None`` are retained unchanged except that minimal
+            energy resolves ``xr=None`` to "zero".
     
         node_counts : dict
             Number of nodes represented by each processed state input.
@@ -455,14 +458,18 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         node_counts = {}
         node_labels = {}
         state_labels = {}
-    
+
+        _validate_xr(states.get("xr"), self.energy_type_)
+
         for name, state in states.items():
     
             if _is_niimg_like(state):
                 state = self._process_niimg(state)
     
             if state is None or isinstance(state, str):
-                states_processed[name] = state
+                states_processed[name] = (
+                    _get_xr(state, self.energy_type_) if name == "xr" else state
+                )
                 node_counts[name] = None
                 node_labels[name] = None
                 state_labels[name] = None
@@ -476,7 +483,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             state_labels[name] = _get_state_labels(state)
     
             state_processed = np.asarray(state)
-    
+            if name == "xr" and state_processed.ndim == 2:
+                state_processed = state_processed[0]
+
             states_processed[name] = state_processed
             node_counts[name] = _get_node_count(state_processed)
     
@@ -501,11 +510,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             X0,
             Xf,
         )
-        _validate_xr(
-            xr,
-            self.energy_type_,
-        )
-    
         states = {
             "X": X,
             "X0": X0,
@@ -589,6 +593,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         xr : array-like, Niimg-like, str, or None, default="xf"
             Reference state used for optimal control energy. Supported
             symbolic values are "zero", "x0", "xf", and "midpoint".
+            Array-like inputs must describe one state with shape
+            (n_nodes,) or (1, n_nodes); Niimg-like inputs must contain
+            exactly one state.
             For minimal energy, ``xr`` must be None and is internally
             resolved to "zero".
         
@@ -669,9 +676,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     
         return self
 
-    # TODO: In latest versions of nctpy, state-input can both be (N,) or (N,1)!
-    # So we can probably make processing of xr easier if we tie braincontrol
-    # to newer nctpy version
     def _transform_states(
         self,
         X,
@@ -686,11 +690,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             X0,
             Xf,
         )
-        _validate_xr(
-            xr,
-            self.energy_type_,
-        )
-    
         states = {
             "X": X,
             "X0": X0,
@@ -719,10 +718,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         X = states["X"]
         X0 = states["X0"]
         Xf = states["Xf"]
-        xr = _get_xr(
-            states["xr"],
-            self.energy_type_,
-            )
+        xr = states["xr"]
     
         # FIXME: The following is too long! What is this even doing?
         if X is not None:
@@ -745,18 +741,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 axis=0,
             )
             
-        # FIXME: This should be done in _validate_xr. As xr can be 
-        # a niimg-like input by user this should be done after process states?
-        # TODO: The dimension check belongs in _validate_xr
-        if xr is not None and not isinstance(xr, str):
-            if xr.ndim == 2:
-                if xr.shape[0] != 1:
-                    raise ValueError(
-                        "xr must describe a single reference state."
-                    )
-    
-                xr = xr[0]
-    
         return (
             X,
             xr,
@@ -894,6 +878,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         xr : array-like, Niimg-like, str, or None, default="xf"
             Reference state used for optimal control energy. Supported
             symbolic values are "zero", "x0", "xf", and "midpoint".
+            Array-like inputs must describe one state with shape
+            (n_nodes,) or (1, n_nodes); Niimg-like inputs must contain
+            exactly one state.
             For minimal energy, ``xr`` must be None and is internally
             resolved to "zero".
         

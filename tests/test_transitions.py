@@ -567,3 +567,124 @@ def test_user_masker_is_not_fitted_in_place(transition_data):
     )
     Transitioner(T=0.002, transitions="undirected", masker=masker).fit(A=A, X=image)
     assert not hasattr(masker, "n_elements_")
+
+
+####################
+## Reference states
+####################
+
+@pytest.mark.parametrize("factory", [
+    np.array, list, tuple, pd.Series,
+    lambda values: np.array([values]),
+    lambda values: [values],
+    lambda values: (tuple(values),),
+    lambda values: pd.DataFrame([values]),
+])
+@pytest.mark.parametrize("system,T", [("continuous", 0.002), ("discrete", 2)])
+def test_reference_array_inputs(transition_data, factory, system, T):
+    """All supported representations use the same reference in fit and transform."""
+    A, X = transition_data
+    reference = factory([0.25, 0.75])
+    estimator = Transitioner(T=T, system=system, transitions="undirected")
+    estimator.fit(A=A, X=X, xr=reference)
+    states, counts, labels, _ = estimator._process_states({"xr": reference})
+    np.testing.assert_array_equal(states["xr"], [0.25, 0.75])
+    assert counts["xr"] == 2
+    result = estimator.transform(A=A, X=X, xr=reference)
+    expected = Transitioner(T=T, system=system, transitions="undirected").fit_transform(
+        A=A, X=X, xr=np.array([0.25, 0.75])
+    )
+    np.testing.assert_allclose(result, expected)
+
+
+@pytest.mark.parametrize("reference,error,match", [
+    (np.ones((2, 2)), ValueError, "single reference state"),
+    (np.ones((2, 1)), ValueError, "single reference state"),
+    (np.ones((0, 2)), ValueError, "single reference state"),
+    (np.ones((1, 1, 2)), ValueError, "1D or 2D"),
+    (np.array(1), ValueError, "1D or 2D"),
+    ([np.nan, 1], ValueError, "finite"),
+    ([np.inf, 1], ValueError, "finite"),
+    (["a", "b"], TypeError, "numeric"),
+    (None, TypeError, "array-like"),
+    ({"a": 1}, TypeError, "array-like"),
+    ("invalid", ValueError, "xr must be"),
+    ([1, 2, 3], ValueError, "same number of nodes"),
+    ([], ValueError, "same number of nodes"),
+])
+def test_invalid_reference_rejected_in_fit_and_transform(
+    transition_data, reference, error, match
+):
+    A, X = transition_data
+    estimator = Transitioner(T=0.002).fit(A=A, X=X)
+    for method in (estimator.fit, estimator.transform):
+        with pytest.raises(error, match=match):
+            method(A=A, X=X, xr=reference)
+
+
+@pytest.mark.parametrize("factory", [
+    lambda nodes: pd.Series([0.25, 0.75], index=nodes),
+    lambda nodes: pd.DataFrame([[0.25, 0.75]], columns=nodes),
+])
+def test_reference_node_labels(labelled_transition_data, factory):
+    A, X = labelled_transition_data
+    reference = factory(X.columns)
+    estimator = Transitioner(T=0.002).fit(A=A, X=X, xr=reference)
+    assert estimator.node_labels_.equals(X.columns)
+    estimator.transform(A=A, X=X, xr=reference)
+    bad_reference = factory(X.columns[::-1])
+    for method in (estimator.fit, estimator.transform):
+        with pytest.raises(ValueError, match="Node labels must match"):
+            method(A=A, X=X, xr=bad_reference)
+
+
+@pytest.mark.parametrize("symbol", ["zero", "x0", "xf", "midpoint"])
+def test_symbolic_reference_states(transition_data, symbol):
+    A, X = transition_data
+    result = Transitioner(T=0.002).fit_transform(A=A, X=X, xr=symbol)
+    assert result.shape == (6, 2)
+
+
+@pytest.mark.parametrize("system,T", [("continuous", 0.002), ("discrete", 2)])
+def test_minimal_energy_resolution(transition_data, system, T):
+    A, X = transition_data
+    estimator = Transitioner(
+        T=T, system=system, normalize_A=False, energy_type="minimal",
+        rho=None, transitions="undirected",
+    )
+    result = estimator.fit_transform(A=A, X=X, S=None, xr=None)
+    assert estimator.rho_ == 1.0
+    _, controls, _ = get_control_inputs(
+        A_norm=A, T=T, B=np.eye(2), x0=X[0], xf=X[1],
+        system=system, rho=1.0, S=np.zeros((2, 2)), xr="zero",
+    )
+    np.testing.assert_allclose(result[0], integrate_u(controls))
+    assert estimator._process_states({"xr": None})[0]["xr"] == "zero"
+    for method in (estimator.fit, estimator.transform):
+        with pytest.raises(ValueError, match="xr must be None"):
+            method(A=A, X=X, S=None, xr="zero")
+        with pytest.raises(ValueError, match="S must be None"):
+            method(A=A, X=X, S="identity", xr=None)
+    with pytest.raises(ValueError, match="rho must be None"):
+        Transitioner(T=T, system=system, energy_type="minimal").fit(
+            A=A, X=X, S=None, xr=None
+        )
+
+
+@pytest.mark.parametrize("shape", [(2, 1, 1), (2, 1, 1, 1)])
+def test_reference_image(transition_data, shape):
+    A, X = transition_data
+    reference = np.array([0.25, 0.75])
+    image = nib.Nifti1Image(reference.reshape(shape), np.eye(4))
+    labels = nib.Nifti1Image(
+        np.array([1, 2], dtype=np.int16).reshape(2, 1, 1), np.eye(4)
+    )
+    masker = NiftiLabelsMasker(labels_img=labels, standardize=None, reports=False)
+    estimator = Transitioner(T=0.002, masker=masker)
+    actual = estimator.fit_transform(A=A, X=X, xr=image)
+    expected = Transitioner(T=0.002).fit_transform(A=A, X=X, xr=reference)
+    np.testing.assert_allclose(actual, expected)
+    multiple = nib.Nifti1Image(np.ones((2, 1, 1, 2)), np.eye(4))
+    for method in (estimator.fit, estimator.transform):
+        with pytest.raises(ValueError, match="exactly one state"):
+            method(A=A, X=X, xr=multiple)
