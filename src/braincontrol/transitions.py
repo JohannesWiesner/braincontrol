@@ -105,7 +105,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             :func:`nctpy.utils.matrix_normalization`.
         energy_type : {"minimal", "optimal"}, default="optimal"
             Type of control energy to compute. Minimal energy requires ``rho``,
-            ``S``, and ``xr`` to be omitted. Optimal energy requires these
+            ``S``, and ``xr`` to be None. Optimal energy requires these
             parameters to be specified.
         rho : float or None, default=1.0
             Positive mixing parameter for optimal control energy. Must be less
@@ -407,9 +407,10 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     
         Niimg-like inputs are first transformed into node-level arrays using
         :meth:`_process_niimg`. Array-like inputs are validated and converted
-        to NumPy arrays. ``None`` and string inputs are retained unchanged,
-        because they may represent omitted or symbolic state inputs such as
-        the reference state ``xr``.
+        to NumPy arrays. The reference state ``xr`` is validated before
+        processing and normalized to a 1D vector after conversion. Symbolic
+        references are retained, and ``xr=None`` is resolved to ``"zero"``
+        for minimal energy. Other ``None`` and string inputs are unchanged.
     
         Node and state labels are extracted before conversion to NumPy arrays
         so that metadata provided by pandas objects is preserved.
@@ -425,8 +426,8 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         -------
         states_processed : dict
             Processed state inputs. Array-like and Niimg-like inputs are
-            represented as NumPy arrays. Strings and ``None`` are retained
-            unchanged.
+            represented as NumPy arrays, with a single reference state of
+            shape ``(n_nodes,)``. Symbolic reference states are strings.
     
         node_counts : dict
             Number of nodes represented by each processed state input.
@@ -448,7 +449,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     
         ValueError
             If an array-like state input has an invalid dimensionality or
-            contains non-finite values.
+            contains non-finite values, or ``xr`` represents multiple states.
         """
     
         states_processed = {}
@@ -457,6 +458,10 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         state_labels = {}
     
         for name, state in states.items():
+
+            if name == "xr":
+                _validate_xr(state, self.energy_type_)
+                state = _get_xr(state, self.energy_type_)
     
             if _is_niimg_like(state):
                 state = self._process_niimg(state)
@@ -476,6 +481,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             state_labels[name] = _get_state_labels(state)
     
             state_processed = np.asarray(state)
+
+            if name == "xr" and state_processed.ndim == 2:
+                state_processed = state_processed[0]
     
             states_processed[name] = state_processed
             node_counts[name] = _get_node_count(state_processed)
@@ -501,11 +509,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             X0,
             Xf,
         )
-        _validate_xr(
-            xr,
-            self.energy_type_,
-        )
-    
         states = {
             "X": X,
             "X0": X0,
@@ -589,6 +592,10 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         xr : array-like, Niimg-like, str, or None, default="xf"
             Reference state used for optimal control energy. Supported
             symbolic values are "zero", "x0", "xf", and "midpoint".
+            Array-like inputs must contain exactly one state with shape
+            ``(n_nodes,)`` or ``(1, n_nodes)``; 2D inputs use columns for
+            nodes, as for ``X``, ``X0``, and ``Xf``. Niimg-like inputs must
+            also represent exactly one state.
             For minimal energy, ``xr`` must be None and is internally
             resolved to "zero".
         
@@ -669,9 +676,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     
         return self
 
-    # TODO: In latest versions of nctpy, state-input can both be (N,) or (N,1)!
-    # So we can probably make processing of xr easier if we tie braincontrol
-    # to newer nctpy version
     def _transform_states(
         self,
         X,
@@ -686,11 +690,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             X0,
             Xf,
         )
-        _validate_xr(
-            xr,
-            self.energy_type_,
-        )
-    
         states = {
             "X": X,
             "X0": X0,
@@ -719,10 +718,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         X = states["X"]
         X0 = states["X0"]
         Xf = states["Xf"]
-        xr = _get_xr(
-            states["xr"],
-            self.energy_type_,
-            )
+        xr = states["xr"]
     
         # FIXME: The following is too long! What is this even doing?
         if X is not None:
@@ -745,18 +741,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 axis=0,
             )
             
-        # FIXME: This should be done in _validate_xr. As xr can be 
-        # a niimg-like input by user this should be done after process states?
-        # TODO: The dimension check belongs in _validate_xr
-        if xr is not None and not isinstance(xr, str):
-            if xr.ndim == 2:
-                if xr.shape[0] != 1:
-                    raise ValueError(
-                        "xr must describe a single reference state."
-                    )
-    
-                xr = xr[0]
-    
         return (
             X,
             xr,
@@ -894,6 +878,10 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         xr : array-like, Niimg-like, str, or None, default="xf"
             Reference state used for optimal control energy. Supported
             symbolic values are "zero", "x0", "xf", and "midpoint".
+            Array-like inputs must contain exactly one state with shape
+            ``(n_nodes,)`` or ``(1, n_nodes)``; 2D inputs use columns for
+            nodes, as for ``X``, ``X0``, and ``Xf``. Niimg-like inputs must
+            also represent exactly one state.
             For minimal energy, ``xr`` must be None and is internally
             resolved to "zero".
         

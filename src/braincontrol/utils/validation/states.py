@@ -21,7 +21,12 @@ def _is_niimg_like(value):
     return True
 
 def _validate_xr(xr, energy_type):
-    """Validate the reference state for the selected energy type."""
+    """Validate one reference state using the same orientation as X/X0/Xf.
+
+    Array-like inputs must have shape ``(n_nodes,)`` or ``(1, n_nodes)``.
+    Niimg-like inputs must represent exactly one state. Minimal energy
+    requires ``xr=None``.
+    """
 
     if energy_type == "minimal":
         if xr is not None:
@@ -53,37 +58,16 @@ def _validate_xr(xr, energy_type):
                     f"got image shape {xr_img.shape}."
                 )
 
-        # TODO: We must work on this. My current contract is: If the
-        # object is 1D than rows represent nodes, but if it's 2D then columns
-        # represent nodes. So nctpy wants a different shape than braincontrol.
-        
-        # FIXME: This is not needed anymore, nctpy now also accepts (N) or (N,1)
-        # TODO: Just use _validate_state_array here + make sure that
-        # this array has never more than one state? So xr is just a special form
-        # of _validate_state_array with the specification that it must be only one state!
-        elif isinstance(xr, np.ndarray):
-            if xr.ndim != 2 or xr.shape[1] != 1:
-                raise ValueError(
-                    f"xr must have shape (N, 1); got {xr.shape}."
-                )
-
-            if not np.issubdtype(xr.dtype, np.number):
-                raise TypeError(
-                    "xr must contain numeric values."
-                )
-
-            if not np.all(np.isfinite(xr)):
-                raise ValueError(
-                    "xr must contain only finite values."
-                )
-
         else:
-            # TODO: Can now be also (N,)
-            raise TypeError(
-                "xr must be 'zero', 'x0', 'xf', 'midpoint', "
-                "a single Niimg-like object, or a NumPy array "
-                "of shape (N, 1) when energy_type='optimal'."
-            )
+            _validate_state_array(xr, "xr")
+            xr_array = np.asarray(xr)
+
+            if xr_array.ndim == 2 and xr_array.shape[0] != 1:
+                raise ValueError(
+                    "xr must represent exactly one state with shape "
+                    "(n_nodes,) or (1, n_nodes); "
+                    f"got {xr_array.shape}."
+                )
 
 def _validate_transition_states(X=None, X0=None, Xf=None):
     """Validate transition-state inputs.
@@ -140,7 +124,8 @@ def _validate_state_array(value, name):
     Raises
     ------
     TypeError
-        If the input is not a supported array-like object.
+        If the input is not a supported array-like object or contains
+        non-numeric values.
     ValueError
         If the input is not 1D or 2D, or contains non-finite values.
     """
@@ -164,6 +149,14 @@ def _validate_state_array(value, name):
             f"{name} must be 1D or 2D, "
             f"got {state_array.ndim}D with shape "
             f"{state_array.shape}."
+        )
+
+    if not (
+        np.issubdtype(state_array.dtype, np.number)
+        or np.issubdtype(state_array.dtype, np.bool_)
+    ):
+        raise TypeError(
+            f"{name} must contain numeric values."
         )
 
     if not np.all(np.isfinite(state_array)):
