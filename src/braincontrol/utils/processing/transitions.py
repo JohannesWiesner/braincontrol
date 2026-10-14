@@ -10,81 +10,80 @@ Helpers to compute transitions
 
 import numpy as np
 import pandas as pd
-from itertools import combinations, permutations, product
+from itertools import chain, combinations, permutations, product
 from nctpy.energies import get_control_inputs, integrate_u
 import xarray as xr
 
-# TODO: Add more extensive docstring
-def _get_transition_indices(
-    n_states,
+def _get_transition_pairs(
     transitions,
     *,
-    n_initial_states=None,
+    X=None,
+    X0=None,
+    Xf=None,
 ):
-    """Return indices for the requested state transitions."""
+    """Generate explicit initial/final states in transition order.
 
-    # Transitions within a single state set.
-    if n_initial_states is None:
-        indices = range(n_states)
+    Inputs must already be normalized and validated by
+    ``_validate_transition_states`` and ``_validate_transition_strategy``.
 
-        if transitions == "directed":
-            pairs = permutations(
-                indices,
-                r=2,
-            )
+    Parameters
+    ----------
+    transitions : {"directed", "undirected", "directed_with_self", "self", \
+                   "paired", "all_to_all"}
+        Strategy used to select state pairs.
+    X : ndarray of shape (n_states, n_nodes), optional
+        Single state collection for within-set transitions.
+    X0, Xf : ndarray of shape (n_states, n_nodes), optional
+        Separate initial and final collections for ``paired`` or
+        ``all_to_all``. Their state counts may differ for ``all_to_all``.
 
-        elif transitions == "undirected":
-            pairs = combinations(
-                indices,
-                r=2,
-            )
+    Returns
+    -------
+    initial_states, final_states : ndarray of shape (n_transitions, n_nodes)
+        Corresponding rows define one transition. For ``self`` and
+        ``paired``, the input arrays are reused without copying.
+    transition_indices : ndarray of shape (n_transitions, 2)
+        Source and target positions in their original collections, used
+        to select state labels without offsets or concatenation.
 
-        elif transitions == "directed_with_self":
-            pairs = product(
-                indices,
-                repeat=2,
-            )
-
-        else:  # transitions == "self"
-            pairs = (
-                (index, index)
-                for index in indices
-            )
-
-    # Transitions between initial and final state sets.
+    Notes
+    -----
+    Pairs follow input order with the source varying slowest. Directed
+    transitions omit the diagonal; undirected transitions retain only
+    pairs whose source position is less than the target position.
+    """
+    if X is not None:
+        source_states = target_states = X
     else:
-        initial_indices = range(
-            n_initial_states
-        )
-        final_indices = range(
-            n_initial_states,
-            n_states,
-        )
+        source_states, target_states = X0, Xf
 
-        if transitions == "all_to_all":
-            pairs = product(
-                initial_indices,
-                final_indices,
-            )
+    if transitions in ("self", "paired"):
+        indices = np.arange(source_states.shape[0])
+        return source_states, target_states, np.column_stack((indices, indices))
 
-        else:  # transitions == "paired"
-            pairs = zip(
-                initial_indices,
-                final_indices,
-            )
+    source_indices = range(source_states.shape[0])
+    if transitions == "directed":
+        pairs = permutations(source_indices, r=2)
+    elif transitions == "undirected":
+        pairs = combinations(source_indices, r=2)
+    else:  # transitions in ("directed_with_self", "all_to_all")
+        pairs = product(source_indices, range(target_states.shape[0]))
 
-    return [
-        (transition, source, target)
-        for transition, (source, target) in enumerate(pairs)
-    ]
+    # Consume pairs without retaining a Python tuple for every transition.
+    transition_indices = np.fromiter(
+        chain.from_iterable(pairs), dtype=np.intp
+    ).reshape(-1, 2)
+    initial_states = source_states[transition_indices[:, 0]]
+    final_states = target_states[transition_indices[:, 1]]
+    return initial_states, final_states, transition_indices
 
 # TODO (#26): Make more memory efficient by predefining empty arrays that have
 # n_transitions x n_timepoints x n_nodes. 
 # TODO (#26): Make more computaionally efficient by using parallelization.
 def _get_transition_trajectories(
     A,
-    X,
-    transition_indices,
+    initial_states,
+    final_states,
     T,
     B,
     rho,
@@ -101,12 +100,9 @@ def _get_transition_trajectories(
     A : ndarray of shape (n_nodes, n_nodes)
         Adjacency matrix.
 
-    X : ndarray of shape (n_states, n_nodes)
-        State matrix.
-
-    transition_indices : list of tuple
-        State transitions represented as
-        ``(transition, source, target)``.
+    initial_states, final_states : ndarray of shape (n_transitions, n_nodes)
+        Initial and final state of each transition. The arrays must have
+        the same shape, with corresponding rows defining one transition.
 
     T : float or int
         Time horizon.
@@ -141,13 +137,15 @@ def _get_transition_trajectories(
         Numerical errors for all transitions.
     """
 
-    n_transitions = len(transition_indices)
+    n_transitions = initial_states.shape[0]
 
     state_trajectories = []
     control_trajectories = []
     errors = np.zeros((n_transitions, 2))
 
-    for transition, source, target in transition_indices:
+    for transition, (initial_state, final_state) in enumerate(
+        zip(initial_states, final_states)
+    ):
         (
             state_trajectory,
             control_trajectory,
@@ -156,8 +154,8 @@ def _get_transition_trajectories(
             A_norm=A,
             T=T,
             B=B,
-            x0=X[source],
-            xf=X[target],
+            x0=initial_state,
+            xf=final_state,
             system=system,
             rho=rho,
             S=S,

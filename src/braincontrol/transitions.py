@@ -48,7 +48,7 @@ from braincontrol.utils.processing.matrices import (
     )
 
 from braincontrol.utils.processing.transitions import (
-    _get_transition_indices,
+    _get_transition_pairs,
     _get_transition_trajectories,
     _get_transition_energy,
     _get_trajectory_array
@@ -403,7 +403,8 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     
         Niimg-like inputs are first transformed into node-level arrays using
         :meth:`_process_niimg`. Array-like inputs are validated and converted
-        to NumPy arrays. The reference state ``xr`` is validated before
+        to NumPy arrays of shape ``(n_states, n_nodes)``, including single
+        states. The reference state ``xr`` is validated before
         processing and normalized to a 1D vector after conversion. Symbolic
         references are retained, and ``xr=None`` is resolved to ``"zero"``
         for minimal energy. Other ``None`` and string inputs are unchanged.
@@ -422,8 +423,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         -------
         states_processed : dict
             Processed state inputs. Array-like and Niimg-like inputs are
-            represented as NumPy arrays, with a single reference state of
-            shape ``(n_nodes,)``. Symbolic reference states are strings.
+            represented as NumPy arrays of shape ``(n_states, n_nodes)``,
+            except for the reference state with shape ``(n_nodes,)``.
+            Symbolic reference states are strings.
     
         node_counts : dict
             Number of nodes represented by each processed state input.
@@ -482,6 +484,8 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             # return xr always as (N,) for nctpy
             if name == "xr" and state_processed.ndim == 2:
                 state_processed = state_processed[0]
+            elif name != "xr" and state_processed.ndim == 1:
+                state_processed = state_processed[np.newaxis, :]
             
             states_processed[name] = state_processed
             
@@ -688,7 +692,24 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         Xf,
         xr,
     ):
-        """Validate and transform state inputs for NCT computation."""
+        """Normalize state collections and preserve their separate metadata.
+
+        Parameters
+        ----------
+        X, X0, Xf : array-like, Niimg-like, or None
+            One collection X, or separate initial and final collections.
+        xr : array-like, Niimg-like, str, or None
+            Reference state for the control calculation.
+
+        Returns
+        -------
+        states : dict
+            Normalized X, X0 and Xf arrays of shape ``(n_states, n_nodes)``,
+            or None for unused inputs. The reference xr remains a vector
+            of shape ``(n_nodes,)`` or a symbolic string.
+        node_counts, node_labels, state_labels : dict
+            Schema metadata keyed by the original state-input names.
+        """
     
         _validate_transition_states(
             X,
@@ -723,37 +744,8 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             state_labels
         )
     
-        X = states["X"]
-        X0 = states["X0"]
-        Xf = states["Xf"]
-        xr = states["xr"]
-    
-        # FIXME: The following is too long! What is this even doing?
-        # TODO: See issue #45
-        if X is not None:
-            if X.ndim == 1:
-                X = X[np.newaxis, :]
-    
-            n_initial_states = None
-    
-        else:
-            if X0.ndim == 1:
-                X0 = X0[np.newaxis, :]
-    
-            if Xf.ndim == 1:
-                Xf = Xf[np.newaxis, :]
-    
-            n_initial_states = X0.shape[0]
-    
-            X = np.concatenate(
-                [X0, Xf],
-                axis=0,
-            )
-            
         return (
-            X,
-            xr,
-            n_initial_states,
+            states,
             node_counts,
             node_labels,
             state_labels,
@@ -980,9 +972,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     
         # Transform states.
         (
-            X,
-            xr,
-            n_initial_states,
+            states,
             state_node_counts,
             state_node_labels,
             state_labels,
@@ -1019,16 +1009,23 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         )
     
         # Determine requested state transitions.
-        transition_indices = _get_transition_indices(
-            X.shape[0],
+        initial_states, final_states, transition_indices = _get_transition_pairs(
             self.transitions_,
-            n_initial_states=n_initial_states,
+            X=states["X"],
+            X0=states["X0"],
+            Xf=states["Xf"],
         )
+
+        if states["X"] is not None:
+            source_labels = target_labels = state_labels["X"]
+        else:
+            source_labels = state_labels["X0"]
+            target_labels = state_labels["Xf"]
     
         self.transition_labels_ = _get_transition_labels(
-            state_labels,
+            source_labels,
+            target_labels,
             transition_indices,
-            n_initial_states=n_initial_states,
         )
     
         # Compute state and control trajectories.
@@ -1038,14 +1035,14 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             errors,
         ) = _get_transition_trajectories(
             A,
-            X,
-            transition_indices,
+            initial_states,
+            final_states,
             self.T_,
             B,
             self.rho_,
             S,
             system=self.system_,
-            xr=xr,
+            xr=states["xr"],
             expm_version=self.expm_version_,
         )
     
