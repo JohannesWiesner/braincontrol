@@ -9,7 +9,7 @@ from braincontrol.utils.validation.matrices import (
     _validate_A,
     _validate_B,
     _validate_S,
-    _validate_same_shape
+    _validate_same_shape_matrices
     )
 
 from braincontrol.utils.validation.parameters import (
@@ -170,7 +170,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         self.store_state_trajectories = store_state_trajectories
         self.store_control_trajectories = store_control_trajectories
     
-    # TODO: Outsource code as process_parameters for example processing.py and import it?
     def _fit_parameters(
         self,
         T,
@@ -330,7 +329,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         S = _get_S(S,self.energy_type_,n_nodes)
     
         # Validate resolved matrix shapes.
-        _validate_same_shape(
+        _validate_same_shape_matrices(
             [A, B, S],
             ["A", "B", "S"],
         )
