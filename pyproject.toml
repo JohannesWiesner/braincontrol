@@ -17,7 +17,7 @@ dependencies = [
     "pandas",
     "scipy",
     "scikit-learn",
-    "nctpy==1.0.2",
+    "nctpy==1.2.0",
     "xarray",
     "nilearn>=0.13.0",
 ]

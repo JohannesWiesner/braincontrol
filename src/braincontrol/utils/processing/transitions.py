@@ -78,7 +78,6 @@ def _get_transition_indices(
         for transition, (source, target) in enumerate(pairs)
     ]
 
-# TODO: This function should be placed elsewhere and imported
 # TODO (#26): Make more memory efficient by predefining empty arrays that have
 # n_transitions x n_timepoints x n_nodes. 
 # TODO (#26): Make more computaionally efficient by using parallelization.
