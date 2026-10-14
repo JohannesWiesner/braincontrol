@@ -80,7 +80,8 @@ def _validate_square_matrix(value, name):
             f"{name} must have matching index and column labels."
         )
 
-
+# TODO: Name is misleading because this is:
+# validate_square_matrix + diagonal_matrix OR "identity"
 def _validate_square_matrix_or_identity(value, name):
     """Validate a diagonal matrix or the ``'identity'`` sentinel.
 
