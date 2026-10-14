@@ -301,7 +301,7 @@ def test_xr_array_like_matches_nctpy(labelled_transition_data, reference, system
         ([np.nan, 0.4], ValueError, "xr must contain only finite values"),
         (np.array([[0.2, np.inf]]), ValueError, "xr must contain only finite values"),
         (["left", "right"], TypeError, "xr must contain numeric values"),
-        (None, TypeError, "xr must be a 1D/2D array-like object"),
+        (None, ValueError, "xr must be provided when energy_type"),
         (0.2, TypeError, "xr must be a 1D/2D array-like object"),
         ({"left": 0.2}, TypeError, "xr must be a 1D/2D array-like object"),
         ("invalid", ValueError, "xr must be 'zero', 'x0', 'xf', 'midpoint'"),
@@ -317,6 +317,25 @@ def test_invalid_xr_rejected_in_fit_and_transform(transition_data, method, refer
         estimator.fit(A=A, X=X)
     with pytest.raises(error, match=message):
         getattr(estimator, method)(A=A, X=X, xr=reference)
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        pytest.param(np.array([0.2, 0.4]), id="vector"),
+        pytest.param(np.array([[0.2, 0.4]]), id="single-row-array"),
+        pytest.param([[0.2, 0.4]], id="single-row-list"),
+        pytest.param(pd.DataFrame([[0.2, 0.4]]), id="single-row-dataframe"),
+    ],
+)
+def test_xr_braincontrol_orientation_is_normalized_for_nctpy(transition_data, reference):
+    """Convert braincontrol's (1, N) reference to nctpy's (N,) vector."""
+    A, X = transition_data
+    estimator = Transitioner(T=0.002).fit(A=A, X=X, xr=reference)
+    states, counts, _, _ = estimator._process_states({"xr": reference})
+    assert states["xr"].shape == (2,)
+    assert counts["xr"] == 2
+    np.testing.assert_array_equal(states["xr"], [0.2, 0.4])
 
 
 @pytest.mark.parametrize("container", [pd.Series, pd.DataFrame])
