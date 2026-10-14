@@ -20,12 +20,68 @@ def _is_niimg_like(value):
         return False
     return True
 
+def _validate_state_array(value, name):
+    """Validate an array-like state object.
+
+    Parameters
+    ----------
+    value : array-like
+        State object to validate. Supported types include lists, tuples,
+        NumPy arrays, pandas Series, and pandas DataFrames. The state-object
+        must be either 1D (rows represent nodes, a single column represents
+        one state) or 2D (columns represent nodes, rows represent states)
+    name : str
+        Name of the state object used in error messages.
+
+    Raises
+    ------
+    TypeError
+        If the input is not a supported array-like object or contains
+        non-numeric values.
+    ValueError
+        If the input is not 1D or 2D, or contains non-finite values.
+    """
+    array_like_types = (
+        list,
+        tuple,
+        np.ndarray,
+        pd.Series,
+        pd.DataFrame,
+    )
+
+    if not isinstance(value, array_like_types):
+        raise TypeError(
+            f"{name} must be a 1D/2D array-like object."
+        )
+
+    state_array = np.asarray(value)
+
+    if state_array.ndim not in (1, 2):
+        raise ValueError(
+            f"{name} must be 1D or 2D, "
+            f"got {state_array.ndim}D with shape "
+            f"{state_array.shape}."
+        )
+
+    if not (
+        np.issubdtype(state_array.dtype, np.number)
+        or np.issubdtype(state_array.dtype, np.bool_)
+    ):
+        raise TypeError(
+            f"{name} must contain numeric values."
+        )
+
+    if not np.all(np.isfinite(state_array)):
+        raise ValueError(
+            f"{name} must contain only finite values."
+        )
+
 def _validate_xr(xr, energy_type):
-    """Validate one reference state using the same orientation as X/X0/Xf.
+    """Validate the reference state.
 
     Array-like inputs must have shape ``(n_nodes,)`` or ``(1, n_nodes)``.
     Niimg-like inputs must represent exactly one state. Minimal energy
-    requires ``xr=None``.
+    requires ``xr=None``, while optimal energy requires a reference state.
     """
 
     if energy_type == "minimal":
@@ -36,8 +92,12 @@ def _validate_xr(xr, energy_type):
 
     elif energy_type == "optimal":
 
-        # TODO: we can use _validate_choice here?
-        if isinstance(xr, str):
+        if xr is None:
+            raise ValueError(
+                "xr must be provided when energy_type='optimal'."
+            )
+
+        elif isinstance(xr, str):
             if xr not in ("zero", "x0", "xf", "midpoint"):
                 raise ValueError(
                     "xr must be 'zero', 'x0', 'xf', 'midpoint', "
@@ -46,10 +106,8 @@ def _validate_xr(xr, energy_type):
                 )
 
         elif _is_niimg_like(xr):
-            xr_img = check_niimg(
-                xr,
-                atleast_4d=True,
-            )
+
+            xr_img = check_niimg(xr, atleast_4d=True)
 
             if xr_img.shape[3] != 1:
                 raise ValueError(
@@ -108,62 +166,6 @@ def _validate_transition_states(X=None, X0=None, Xf=None):
             "X0 and Xf must be provided together."
         )
     
-def _validate_state_array(value, name):
-    """Validate an array-like state object.
-
-    Parameters
-    ----------
-    value : array-like
-        State object to validate. Supported types include lists, tuples,
-        NumPy arrays, pandas Series, and pandas DataFrames. The state-object
-        must be either 1D (rows represent nodes, a single column represents
-        one state) or 2D (columns represent nodes, rows represent states)
-    name : str
-        Name of the state object used in error messages.
-
-    Raises
-    ------
-    TypeError
-        If the input is not a supported array-like object or contains
-        non-numeric values.
-    ValueError
-        If the input is not 1D or 2D, or contains non-finite values.
-    """
-    array_like_types = (
-        list,
-        tuple,
-        np.ndarray,
-        pd.Series,
-        pd.DataFrame,
-    )
-
-    if not isinstance(value, array_like_types):
-        raise TypeError(
-            f"{name} must be a 1D/2D array-like object."
-        )
-
-    state_array = np.asarray(value)
-
-    if state_array.ndim not in (1, 2):
-        raise ValueError(
-            f"{name} must be 1D or 2D, "
-            f"got {state_array.ndim}D with shape "
-            f"{state_array.shape}."
-        )
-
-    if not (
-        np.issubdtype(state_array.dtype, np.number)
-        or np.issubdtype(state_array.dtype, np.bool_)
-    ):
-        raise TypeError(
-            f"{name} must contain numeric values."
-        )
-
-    if not np.all(np.isfinite(state_array)):
-        raise ValueError(
-            f"{name} must contain only finite values."
-        )
-        
 # See issue #45 can we make this better?
 def _validate_transition_strategy(
     transitions,

@@ -248,7 +248,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         self.store_state_trajectories_ = store_state_trajectories
         self.store_control_trajectories_ = store_control_trajectories
     
-    # TODO: Outsource to for example processing.py and import it?
     def _process_matrices(
         self,
         A,
@@ -373,7 +372,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     
         return node_counts, node_labels
     
-    # TODO: Outsource to for example processing/states.py and import it?
     def _process_niimg(self, imgs):
         """Fit and apply a masker to Niimg-like input.
     
@@ -397,7 +395,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
     
         return masker.transform(imgs)
     
-    # TODO: Outsource to for example processing/states.py and import it?
     def _process_states(self, states):
         """Process state inputs and extract their schema metadata.
     
@@ -460,7 +457,6 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         for name, state in states.items():
 
             if name == "xr":
-                _validate_xr(state, self.energy_type_)
                 state = _get_xr(state, self.energy_type_)
     
             if _is_niimg_like(state):
@@ -474,18 +470,24 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
                 continue
     
             # at this point, check that array-like objects fullfill all criteria
-            _validate_state_array(state, name)
+            _validate_state_array(state,name)
     
             # Extract labels before converting to a NumPy array.
             node_labels[name] = _get_node_labels(state)
             state_labels[name] = _get_state_labels(state)
     
-            state_processed = np.asarray(state)
-
+            # only now convert to numpy array (because only now niimg-like object
+            # are converted to numpy arrays)
+            state_processed = np.asarray(state)    
+            
+            # return xr always as (N,) for nctpy
             if name == "xr" and state_processed.ndim == 2:
                 state_processed = state_processed[0]
-    
+            
             states_processed[name] = state_processed
+            
+            # only now count the nodes (because only now niimg-like object
+            # are converted to numpy arrays)
             node_counts[name] = _get_node_count(state_processed)
     
         return (
@@ -509,6 +511,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             X0,
             Xf,
         )
+        
+        _validate_xr(xr, self.energy_type_)
+        
         states = {
             "X": X,
             "X0": X0,
@@ -626,6 +631,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         ``transform()``. Control energies and trajectories are computed
         during transformation, not fitting.
         """
+        
         # Validate and store estimator parameters.
         self._fit_parameters(
             self.T,
@@ -690,6 +696,9 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             X0,
             Xf,
         )
+        
+        _validate_xr(xr, self.energy_type_)
+        
         states = {
             "X": X,
             "X0": X0,
@@ -721,6 +730,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
         xr = states["xr"]
     
         # FIXME: The following is too long! What is this even doing?
+        # TODO: See issue #45
         if X is not None:
             if X.ndim == 1:
                 X = X[np.newaxis, :]
@@ -770,7 +780,7 @@ class Transitioner(TransformerMixin, CacheMixin, BaseEstimator, auto_wrap_output
             S,
         )
     
-        # Normalize the adjacency matrix used for NCT.
+        # normalize the adjacency matrix used for NCT.
         if self.normalize_A_:
             A = matrix_normalization(
                 A,
