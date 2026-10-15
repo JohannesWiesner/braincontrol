@@ -52,29 +52,44 @@ def _get_transition_pairs(
     transitions omit the diagonal; undirected transitions retain only
     pairs whose source position is less than the target position.
     """
+    
+    # When X is provided, initial and final states come from the same collection.
+    # Otherwise, X0 contains the initial states and Xf the final states.
     if X is not None:
         source_states = target_states = X
     else:
         source_states, target_states = X0, Xf
-
+    
+    # For 'self' and 'paired', source and target states share the same index.
+    # No combinations need to be generated.
     if transitions in ("self", "paired"):
         indices = np.arange(source_states.shape[0])
         return source_states, target_states, np.column_stack((indices, indices))
-
+    
+    # Generate index pairs for the remaining transition strategies.
     source_indices = range(source_states.shape[0])
+    
     if transitions == "directed":
         pairs = permutations(source_indices, r=2)
+    
     elif transitions == "undirected":
         pairs = combinations(source_indices, r=2)
-    else:  # transitions in ("directed_with_self", "all_to_all")
-        pairs = product(source_indices, range(target_states.shape[0]))
-
-    # Consume pairs without retaining a Python tuple for every transition.
+    
+    elif transitions in ("directed_with_self", "all_to_all"):
+        target_indices = range(target_states.shape[0])
+        pairs = product(source_indices, target_indices)
+    
+    # Convert the generated index pairs into a NumPy array of shape
+    # (n_transitions, 2), without constructing an intermediate Python list.
     transition_indices = np.fromiter(
-        chain.from_iterable(pairs), dtype=np.intp
+        chain.from_iterable(pairs),
+        dtype=np.intp,
     ).reshape(-1, 2)
+    
+    # Use the first index for initial states and the second for final states.
     initial_states = source_states[transition_indices[:, 0]]
     final_states = target_states[transition_indices[:, 1]]
+    
     return initial_states, final_states, transition_indices
 
 # TODO (#26): Make more memory efficient by predefining empty arrays that have

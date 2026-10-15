@@ -290,6 +290,8 @@ def _validate_state_labels(state_labels):
                 "the same level names."
             )
 
+# TODO: Not sure if this belongs here or better in processing/schema.py
+# or in processing/transitions.py
 def _get_transition_labels(
     source_labels,
     target_labels,
