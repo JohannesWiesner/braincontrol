@@ -13,7 +13,6 @@ from braincontrol.transitions import Transitioner
 from braincontrol.utils.processing.transitions import (
     _get_trajectory_array,
     _get_transition_energy,
-    _get_transition_indices,
     _get_transition_trajectories,
 )
 
@@ -49,51 +48,14 @@ def labelled_transition_data(transition_data):
 ## Transition processing
 ####################
 
-@pytest.mark.parametrize(
-    ("strategy", "expected"),
-    [
-        ("directed", [(0, 0, 1), (1, 0, 2), (2, 1, 0), (3, 1, 2), (4, 2, 0), (5, 2, 1)]),
-        ("undirected", [(0, 0, 1), (1, 0, 2), (2, 1, 2)]),
-        ("directed_with_self", [(0, 0, 0), (1, 0, 1), (2, 0, 2), (3, 1, 0), (4, 1, 1), (5, 1, 2), (6, 2, 0), (7, 2, 1), (8, 2, 2)]),
-        ("self", [(0, 0, 0), (1, 1, 1), (2, 2, 2)]),
-    ],
-)
-def test_get_transition_indices_X(strategy, expected):
-    """Test transition-index generation for strategies operating on ``X``.
-    
-    For three states, each strategy must generate the expected source-target
-    pairs in the exact order used later for trajectory computation and labels."""
-    assert _get_transition_indices(3, strategy) == expected
-
-def test_get_transition_indices_all_to_all():
-    """Test all-to-all transition indices for separate initial and final states.
-    
-    Every state in ``X0`` must be paired with every state in ``Xf``, while the
-    returned indices must refer to their positions in the combined state array."""
-    assert _get_transition_indices(5, "all_to_all", n_initial_states=2) == [
-        (0, 0, 2), (1, 0, 3), (2, 0, 4),
-        (3, 1, 2), (4, 1, 3), (5, 1, 4),
-    ]
-
-
-def test_get_transition_indices_paired():
-    """Test paired transition indices for separate initial and final states.
-    
-    Corresponding states from ``X0`` and ``Xf`` must be paired exactly once and
-    must use their positions in the combined state array."""
-    assert _get_transition_indices(4, "paired", n_initial_states=2) == [
-        (0, 0, 2), (1, 1, 3)
-    ]
-
 def test_transition_trajectories_match_nctpy(transition_data):
     """Test trajectory computation against a direct ``nctpy`` calculation.
     
     The helper should return the same state trajectory, control trajectory, and
     numerical error as ``nctpy.get_control_inputs`` for an equivalent transition."""
     A, X = transition_data
-    indices = _get_transition_indices(2, "directed")
     xs, us, errors = _get_transition_trajectories(
-        A, X[:2], indices, 0.002, np.eye(2), 1.0, np.eye(2)
+        A, X[:2], X[1::-1], 0.002, np.eye(2), 1.0, np.eye(2)
     )
     expected_x, expected_u, expected_error = get_control_inputs(
         A_norm=A, T=0.002, B=np.eye(2), x0=X[0], xf=X[1],
@@ -113,9 +75,8 @@ def test_transition_energy_matches_nctpy(transition_data):
     The transition-energy helper must integrate each control trajectory in the
     same way as ``nctpy.integrate_u`` and return one energy value per node."""
     A, X = transition_data
-    indices = _get_transition_indices(2, "directed")
     _, controls, _ = _get_transition_trajectories(
-        A, X[:2], indices, 0.002, np.eye(2), 1.0, np.eye(2)
+        A, X[:2], X[1::-1], 0.002, np.eye(2), 1.0, np.eye(2)
     )
     energy = _get_transition_energy(controls)
     assert energy.shape == (2, 2)

@@ -166,7 +166,6 @@ def _validate_transition_states(X=None, X0=None, Xf=None):
             "X0 and Xf must be provided together."
         )
     
-# See issue #45 can we make this better?
 def _validate_transition_strategy(
     transitions,
     X,
@@ -203,25 +202,22 @@ def _validate_transition_strategy(
 
     This function assumes that the X / X0 / Xf input configuration has
     already been validated by :func:`_validate_transition_states` and that
-    the state inputs have already been converted to their processed NumPy
-    representations.
+    the state inputs have already been normalized to two-dimensional
+    NumPy arrays with one state per row.
 
     Parameters
     ----------
     transitions : str
         Transition strategy to validate.
 
-    X : ndarray or None
-        Processed single-set state input. A one-dimensional array represents
-        one state. For a two-dimensional array, rows represent states.
+    X : ndarray of shape (n_states, n_nodes) or None
+        Processed single-set state input.
 
-    X0 : ndarray or None
-        Processed initial-state input. A one-dimensional array represents
-        one state. For a two-dimensional array, rows represent states.
+    X0 : ndarray of shape (n_states, n_nodes) or None
+        Processed initial-state input.
 
-    Xf : ndarray or None
-        Processed final-state input. A one-dimensional array represents
-        one state. For a two-dimensional array, rows represent states.
+    Xf : ndarray of shape (n_states, n_nodes) or None
+        Processed final-state input.
 
     Raises
     ------
@@ -234,10 +230,7 @@ def _validate_transition_strategy(
 
     # Validate transitions within a single state set.
     if X is not None:
-        if X.ndim == 1:
-            n_states = 1
-        else:
-            n_states = X.shape[0]
+        n_states = X.shape[0]
 
         if n_states == 1:
             valid_transitions = (
@@ -261,16 +254,6 @@ def _validate_transition_strategy(
         return
 
     # Validate transitions between initial and final state sets.
-    if X0.ndim == 1:
-        n_initial_states = 1
-    else:
-        n_initial_states = X0.shape[0]
-
-    if Xf.ndim == 1:
-        n_final_states = 1
-    else:
-        n_final_states = Xf.shape[0]
-
     valid_transitions = (
         "all_to_all",
         "paired",
@@ -285,7 +268,7 @@ def _validate_transition_strategy(
 
     if (
         transitions == "paired"
-        and n_initial_states != n_final_states
+        and X0.shape[0] != Xf.shape[0]
     ):
         raise ValueError(
             "X0 and Xf must contain the same number of states "
