@@ -57,13 +57,11 @@ For unlabeled NumPy input, the returned energy has shape
 `(n_transitions, n_nodes)`. If node or state labels are available,
 `Transitioner` preserves them in a pandas `DataFrame`.
 
-## Development
+## Tutorial
 
-Install the development dependencies and run the test suite with:
+You can find a tutorial here:
 
-``` bash
-python -m pytest -q
-```
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/JohannesWiesner/braincontrol/dev?urlpath=lab/tree/examples/braincontrol_tutorial.ipynb)
 
 ## License
 
