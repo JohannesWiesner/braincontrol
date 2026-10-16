@@ -1,12 +1,13 @@
 """Sphinx configuration for the braincontrol documentation."""
 
-from importlib.metadata import version
+from importlib.metadata import version as package_version
 from pathlib import Path
 import shutil
 
 project = "braincontrol"
 author = "Johannes Wiesner"
-release = version("braincontrol")
+release = package_version("braincontrol")
+version = release
 
 extensions = [
     "sphinx.ext.autodoc",
