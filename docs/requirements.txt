@@ -1,0 +1,5 @@
+-e .
+sphinx>=7,<9
+sphinx-rtd-theme>=3,<4
+myst-nb>=1,<2
+sphinx-autodoc-typehints>=2,<4
